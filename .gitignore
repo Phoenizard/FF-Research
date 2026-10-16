@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+data/cifar/
+results/
+tmp/
+.venv/
+wandb/
+*.pt
+*.pth
+.env
+.env.*
+!.env.example
+/HANDOFF.md
+/RULE.md
+
