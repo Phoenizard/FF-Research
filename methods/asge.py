@@ -40,6 +40,9 @@ class ASGE(nn.Module):
         logits = self.local_logits(index, activations)
         return functional.cross_entropy(logits, labels), logits.detach()
 
+    def prepare_activations(self, index, activations):
+        return activations
+
     def local_logits(self, index, activations):
         return self.goodness[index](activations)
 

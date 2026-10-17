@@ -39,6 +39,7 @@ class LocalCNN(nn.Module):
         for index, conv in enumerate(self.convs):
             activations = functional.relu(conv(hidden.detach()))
             prediction_features.append(self.fusion_features(activations))
+            activations = self.method.prepare_activations(index, activations)
             if return_local:
                 local_logits.append(self.method.local_logits(index, activations))
             hidden = self.method.propagate(index, activations).detach()

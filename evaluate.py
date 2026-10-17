@@ -11,6 +11,8 @@ from torch.nn import functional as functional
 
 from data.datasets import cifar_datasets, evaluation_dataset, make_loader
 from methods.asge import ASGE
+from methods.BiCovG import BiCovG
+from methods.CwC import CwC
 from models.cnn import LocalCNN
 
 
@@ -18,11 +20,10 @@ ROOT = Path(__file__).resolve().parent
 
 
 def build_model(config):
-    if config["method"] != "asge":
-        raise ValueError(f"Unsupported method: {config['method']}")
+    method = {"asge": ASGE, "bicovg": BiCovG, "cwc": CwC}[config["method"]]
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(config["seed"])
-        return LocalCNN(config, ASGE(config))
+        return LocalCNN(config, method(config))
 
 
 def synchronize(device):
@@ -76,7 +77,9 @@ def parameter_counts(model):
             "auxiliary_parameters": sum(parameter.numel() for parameter in model.method.parameters())
             + sum(parameter.numel() for parameter in model.fusion.parameters()),
             "fusion_parameters": sum(parameter.numel() for parameter in model.fusion.parameters()),
-            "fixed_projection_elements": sum(buffer.numel() for buffer in model.method.buffers())}
+            "fixed_projection_elements": sum(buffer.numel() for name, buffer in model.method.named_buffers()
+                                             if not name.endswith(("running_mean", "running_var",
+                                                                   "num_batches_tracked")))}
 
 
 def write_result(run_dir, config, model, metrics, training, device):

@@ -30,19 +30,22 @@ def seed_run(seed):
 
 
 def build_optimizers(model, config):
-    parameter_groups = [conv.parameters() for conv in model.convs] + [model.fusion.parameters()]
+    parameter_groups = [list(conv.parameters()) + list(model.method.goodness[index].parameters())
+                        for index, conv in enumerate(model.convs)] + [model.fusion.parameters()]
     settings = [config] * len(model.convs) + [config["fusion"]]
-    optimizers = [torch.optim.AdamW(parameters, lr=setting["learning_rate"],
-                                   weight_decay=setting["weight_decay"], betas=tuple(setting["betas"]),
-                                   eps=setting["optimizer_epsilon"])
+    optimizers = [getattr(torch.optim, setting["optimizer"])(
+        parameters, lr=setting["learning_rate"], weight_decay=setting["weight_decay"],
+        betas=tuple(setting["betas"]), eps=setting["optimizer_epsilon"])
                   for parameters, setting in zip(parameter_groups, settings, strict=True)]
     schedulers = [torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=config["epochs"], eta_min=setting["minimum_learning_rate"])
+        if setting["scheduler"] == "CosineAnnealingLR" else
+        torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0, total_iters=config["epochs"])
         for optimizer, setting in zip(optimizers, settings, strict=True)]
     return optimizers, schedulers
 
 
-def train_step(model, optimizers, images, labels):
+def train_step(model, optimizers, images, labels, gradient_clip=None):
     hidden = model.method.prepare_input(images).detach()
     prediction_features = []
     local_losses = []
@@ -50,14 +53,22 @@ def train_step(model, optimizers, images, labels):
     for index, (conv, optimizer) in enumerate(zip(model.convs, optimizers[:-1], strict=True)):
         optimizer.zero_grad(set_to_none=True)
         activations = functional.relu(conv(hidden.detach()))
-        loss, local_logits = model.method.local_loss(index, activations, labels)
+        local_features = model.method.prepare_activations(index, activations)
+        loss, local_logits = model.method.local_loss(index, local_features, labels)
         loss.backward()
-        optimizer.step()
+        if gradient_clip is None:
+            optimizer.step()
         local_losses.append(loss.detach())
         with torch.no_grad():
             local_correct.append((local_logits.argmax(dim=1) == labels).sum())
             prediction_features.append(model.fusion_features(activations))
-            hidden = model.method.propagate(index, activations).detach()
+            hidden = model.method.propagate(index, local_features).detach()
+    if gradient_clip is not None:
+        parameters = [parameter for optimizer in optimizers[:-1]
+                      for group in optimizer.param_groups for parameter in group["params"]]
+        torch.nn.utils.clip_grad_norm_(parameters, gradient_clip)
+        for optimizer in optimizers[:-1]:
+            optimizer.step()
     optimizers[-1].zero_grad(set_to_none=True)
     logits = model.predict(prediction_features)
     prediction_loss = functional.cross_entropy(logits, labels)
@@ -85,7 +96,8 @@ def probe_batch(config, device, requested):
             synchronize(device)
             started = time.perf_counter()
             for _ in range(3):
-                logits, losses, _ = train_step(model, optimizers, images, labels)
+                logits, losses, _ = train_step(model, optimizers, images, labels,
+                                               config.get("gradient_clip"))
                 if not torch.isfinite(losses).all():
                     raise RuntimeError("Non-finite loss during capacity check")
             model.eval()
@@ -217,7 +229,8 @@ def run(config, args, device, checkpoint=None):
             started = time.perf_counter()
             for images, labels in training_loader:
                 images, labels = images.to(device), labels.to(device)
-                logits, losses, batch_correct = train_step(model, optimizers, images, labels)
+                logits, losses, batch_correct = train_step(model, optimizers, images, labels,
+                                                           config.get("gradient_clip"))
                 if not torch.isfinite(losses).all():
                     raise RuntimeError(f"Non-finite training loss at epoch {epoch + 1}")
                 loss_sum += losses * labels.numel()
@@ -267,9 +280,9 @@ def run(config, args, device, checkpoint=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train ASGE on the common CIFAR backbone.")
+    parser = argparse.ArgumentParser(description="Train FF methods on the common CIFAR backbone.")
     parser.add_argument("--datasets", nargs="+", choices=DATASETS, default=["cifar10", "cifar100"])
-    parser.add_argument("--method", choices=["asge"], default="asge")
+    parser.add_argument("--method", choices=["asge", "bicovg", "cwc"], default="asge")
     parser.add_argument("--seeds", nargs="+", type=int, choices=[1, 2, 3])
     parser.add_argument("--batch-size", default="128")
     parser.add_argument("--device", default="cuda")
@@ -297,7 +310,7 @@ def main():
             parser.error("--smoke-test output must be inside the project tmp directory")
     if args.prepare_only:
         for dataset in args.datasets:
-            config = experiment_config(dataset, 1)
+            config = experiment_config(dataset, 1, args.method)
             training, testing = cifar_datasets(config, args.data_root, args.download)
             print(json.dumps({"dataset": dataset, "train": len(training), "test": len(testing),
                               "normalization": config["normalization"]}))
@@ -310,7 +323,7 @@ def main():
         run(checkpoint["config"], args, device, checkpoint)
         return
     for dataset in args.datasets:
-        config = experiment_config(dataset, args.seeds[0])
+        config = experiment_config(dataset, args.seeds[0], args.method)
         capacity = probe_batch(config, device, args.batch_size)
         print(json.dumps(capacity), flush=True)
         if args.probe_only:
@@ -319,7 +332,7 @@ def main():
             write_json(probe_dir / f"{dataset}_capacity.json", capacity)
             continue
         for seed in args.seeds:
-            config = experiment_config(dataset, seed)
+            config = experiment_config(dataset, seed, args.method)
             config["batch_size"] = capacity["batch_size"]
             if args.smoke_test:
                 config.update(epochs=2, run_kind="smoke-test", evaluation_scope="64_training_images")

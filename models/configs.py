@@ -1,5 +1,8 @@
 from copy import deepcopy
 
+from methods.BiCovG import DEFAULTS as BICOVG_DEFAULTS
+from methods.CwC import DEFAULTS as CWC_DEFAULTS
+
 
 DATASETS = {
     "cifar10": {"num_classes": 10, "channels": [100, 100, 200, 200, 400, 400, 400, 400]},
@@ -7,11 +10,11 @@ DATASETS = {
 }
 
 
-def experiment_config(dataset, seed):
-    return {
+def experiment_config(dataset, seed, method="asge"):
+    config = {
         "dataset": dataset,
         **deepcopy(DATASETS[dataset]),
-        "method": "asge",
+        "method": method,
         "seed": seed,
         "epochs": 400,
         "batch_size": 128,
@@ -53,3 +56,7 @@ def experiment_config(dataset, seed):
         "source": "https://arxiv.org/abs/2509.12394v1",
         "source_commit": "3226665035a15da90c70f3df0a6bc5ea7de326cc",
     }
+    if method in ("bicovg", "cwc"):
+        config.update({"bicovg": BICOVG_DEFAULTS, "cwc": CWC_DEFAULTS}[method])
+        config.pop("alpha")
+    return config
