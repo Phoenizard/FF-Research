@@ -32,12 +32,16 @@ def seed_run(seed):
 def build_optimizers(model, config):
     parameter_groups = [list(conv.parameters()) + list(model.method.goodness[index].parameters())
                         for index, conv in enumerate(model.convs)] + [model.fusion.parameters()]
+    if hasattr(model.method, "optimizer_parameters"):
+        parameter_groups = [model.method.optimizer_parameters(conv, index, config)
+                            for index, conv in enumerate(model.convs)] + [model.fusion.parameters()]
     settings = [config] * len(model.convs) + [config["fusion"]]
     optimizers = [getattr(torch.optim, setting["optimizer"])(
         parameters, lr=setting["learning_rate"], weight_decay=setting["weight_decay"],
         betas=tuple(setting["betas"]), eps=setting["optimizer_epsilon"])
                   for parameters, setting in zip(parameter_groups, settings, strict=True)]
-    schedulers = [torch.optim.lr_scheduler.CosineAnnealingLR(
+    schedulers = [torch.optim.lr_scheduler.LambdaLR(optimizer, model.method.learning_rate_factor)
+        if setting["scheduler"] == "LambdaLR" else torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=config["epochs"], eta_min=setting["minimum_learning_rate"])
         if setting["scheduler"] == "CosineAnnealingLR" else
         torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0, total_iters=config["epochs"])
@@ -56,6 +60,8 @@ def train_step(model, optimizers, images, labels, gradient_clip=None):
         local_features = model.method.prepare_activations(index, activations)
         loss, local_logits = model.method.local_loss(index, local_features, labels)
         loss.backward()
+        if hasattr(model.method, "clip_gradients"):
+            model.method.clip_gradients(index, conv)
         if gradient_clip is None:
             optimizer.step()
         local_losses.append(loss.detach())
@@ -156,10 +162,13 @@ def tracking_run(config, args, run_dir, training, counts):
     previous = training.get("wandb")
     metadata = previous or {"id": uuid4().hex[:12], "entity": args.wandb_entity,
                             "project": args.wandb_project}
+    method_name = config["method"]
+    if config.get("readout") == "random":
+        method_name += "-random-readout"
     tracker = wandb.init(
         **metadata, resume="must" if previous else "never", mode="online",
-        name=f"{config['method']}-{config['dataset']}-seed{config['seed']}",
-        group=f"{config['method']}-{config['dataset']}", job_type="train",
+        name=f"{method_name}-{config['dataset']}-seed{config['seed']}",
+        group=f"{method_name}-{config['dataset']}", job_type="train",
         config={**config, "environment": {key: training[key] for key in
                 ("python", "torch", "torchvision", "device", "workers", "cpu_threads")},
                 "parameters": counts}, dir=str(run_dir), save_code=False,
@@ -218,6 +227,7 @@ def run(config, args, device, checkpoint=None):
                         schedulers, training_loader, training, history)
         for epoch in range(start_epoch, config["epochs"]):
             model.train()
+            model.method.epoch = epoch
             total = 0
             correct = torch.zeros(len(model.convs) + 1, dtype=torch.long, device=device)
             loss_sum = torch.zeros(len(model.convs) + 1, device=device)
@@ -282,7 +292,10 @@ def run(config, args, device, checkpoint=None):
 def main():
     parser = argparse.ArgumentParser(description="Train FF methods on the common CIFAR backbone.")
     parser.add_argument("--datasets", nargs="+", choices=DATASETS, default=["cifar10", "cifar100"])
-    parser.add_argument("--method", choices=["asge", "bicovg", "cwc"], default="asge")
+    parser.add_argument("--method", choices=["asge", "bicovg", "cwc", "dtg_ff", "deeperforward", "hcl_ff"],
+                        default="asge")
+    parser.add_argument("--bicovg-readout", choices=["learnable", "random"], default="learnable",
+                        help="BiCovG local linear readout: trainable or fixed at random initialization.")
     parser.add_argument("--seeds", nargs="+", type=int, choices=[1, 2, 3])
     parser.add_argument("--batch-size", default="128")
     parser.add_argument("--device", default="cuda")
@@ -324,6 +337,8 @@ def main():
         return
     for dataset in args.datasets:
         config = experiment_config(dataset, args.seeds[0], args.method)
+        if args.method == "bicovg":
+            config["readout"] = args.bicovg_readout
         capacity = probe_batch(config, device, args.batch_size)
         print(json.dumps(capacity), flush=True)
         if args.probe_only:
@@ -333,6 +348,8 @@ def main():
             continue
         for seed in args.seeds:
             config = experiment_config(dataset, seed, args.method)
+            if args.method == "bicovg":
+                config["readout"] = args.bicovg_readout
             config["batch_size"] = capacity["batch_size"]
             if args.smoke_test:
                 config.update(epochs=2, run_kind="smoke-test", evaluation_scope="64_training_images")

@@ -6,6 +6,7 @@ from methods.asge import ASGE
 
 
 DEFAULTS = {
+    "readout": "learnable",
     "cc_reduction": 8,
     "gradient_clip": 1.0,
     "source": "https://github.com/Phoenizard/SIR-SID",
@@ -14,7 +15,7 @@ DEFAULTS = {
 
 
 class BiCovGReadout(nn.Module):
-    def __init__(self, channels, spatial_size, classes, reduction):
+    def __init__(self, channels, spatial_size, classes, reduction, readout="learnable"):
         super().__init__()
         scales = [1, 2] if channels >= 256 else [2, 4] if channels >= 128 else [4, 8]
         self.scales = [scale for scale in scales if scale < spatial_size] or [min(scales)]
@@ -25,6 +26,7 @@ class BiCovGReadout(nn.Module):
         self.readout = nn.Linear(dimensions, classes)
         nn.init.kaiming_normal_(self.readout.weight, nonlinearity="relu")
         nn.init.zeros_(self.readout.bias)
+        self.readout.requires_grad_(readout == "learnable")
 
     def forward(self, activations):
         energies = (activations.square(), self.projection(activations).square())
@@ -43,6 +45,7 @@ class BiCovG(ASGE):
         spatial_size = 32
         for index, channels in enumerate(config["channels"]):
             self.goodness.append(BiCovGReadout(channels, spatial_size, config["num_classes"],
-                                              config["cc_reduction"]))
+                                              config["cc_reduction"],
+                                              config.get("readout", "learnable")))
             if index in self.pool_after:
                 spatial_size //= 2

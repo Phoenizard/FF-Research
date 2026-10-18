@@ -2,6 +2,9 @@ from copy import deepcopy
 
 from methods.BiCovG import DEFAULTS as BICOVG_DEFAULTS
 from methods.CwC import DEFAULTS as CWC_DEFAULTS
+from methods.DTG_FF import DEFAULTS as DTG_DEFAULTS
+from methods.DeeperForward import DEFAULTS as DEEPERFORWARD_DEFAULTS
+from methods.HCL_FF import DEFAULTS as HCL_DEFAULTS, LEVELS
 
 
 DATASETS = {
@@ -56,7 +59,12 @@ def experiment_config(dataset, seed, method="asge"):
         "source": "https://arxiv.org/abs/2509.12394v1",
         "source_commit": "3226665035a15da90c70f3df0a6bc5ea7de326cc",
     }
-    if method in ("bicovg", "cwc"):
-        config.update({"bicovg": BICOVG_DEFAULTS, "cwc": CWC_DEFAULTS}[method])
+    if method in ("bicovg", "cwc", "deeperforward", "hcl_ff"):
+        config.update({"bicovg": BICOVG_DEFAULTS, "cwc": CWC_DEFAULTS,
+                       "deeperforward": DEEPERFORWARD_DEFAULTS, "hcl_ff": HCL_DEFAULTS}[method])
         config.pop("alpha")
+    if method == "dtg_ff":
+        config.update(DTG_DEFAULTS)
+    if method == "hcl_ff":
+        config["hierarchy_levels"] = LEVELS[dataset].copy()
     return config

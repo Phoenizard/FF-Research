@@ -13,6 +13,9 @@ from data.datasets import cifar_datasets, evaluation_dataset, make_loader
 from methods.asge import ASGE
 from methods.BiCovG import BiCovG
 from methods.CwC import CwC
+from methods.DTG_FF import DTGFF
+from methods.DeeperForward import DeeperForward
+from methods.HCL_FF import HCLFF
 from models.cnn import LocalCNN
 
 
@@ -20,7 +23,9 @@ ROOT = Path(__file__).resolve().parent
 
 
 def build_model(config):
-    method = {"asge": ASGE, "bicovg": BiCovG, "cwc": CwC}[config["method"]]
+    method = {"asge": ASGE, "bicovg": BiCovG, "cwc": CwC,
+              "dtg_ff": DTGFF, "deeperforward": DeeperForward,
+              "hcl_ff": HCLFF}[config["method"]]
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(config["seed"])
         return LocalCNN(config, method(config))
@@ -74,12 +79,14 @@ def evaluate(model, loader, device):
 
 def parameter_counts(model):
     return {"backbone_parameters": sum(parameter.numel() for parameter in model.convs.parameters()),
-            "auxiliary_parameters": sum(parameter.numel() for parameter in model.method.parameters())
+            "auxiliary_parameters": sum(parameter.numel() for parameter in model.method.parameters()
+                                        if parameter.requires_grad)
             + sum(parameter.numel() for parameter in model.fusion.parameters()),
             "fusion_parameters": sum(parameter.numel() for parameter in model.fusion.parameters()),
             "fixed_projection_elements": sum(buffer.numel() for name, buffer in model.method.named_buffers()
-                                             if not name.endswith(("running_mean", "running_var",
-                                                                   "num_batches_tracked")))}
+                                             if name.endswith((".projection", ".bias")))
+            + sum(parameter.numel() for parameter in model.method.parameters()
+                  if not parameter.requires_grad)}
 
 
 def write_result(run_dir, config, model, metrics, training, device):
@@ -111,6 +118,7 @@ def summarize(run_dirs, output):
         accuracies = [result["metrics"]["fusion_accuracy"] for _, result in entries]
         best_predictions = [result["metrics"]["best_pred_accuracy"] for _, result in entries]
         rows.append({"dataset": config["dataset"], "method": config["method"],
+                     "readout": config.get("readout"),
                      "seeds": ",".join(str(seed) for seed, _ in sorted(entries)),
                      "status": "complete" if sorted(seed for seed, _ in entries) == [1, 2, 3]
                      else "incomplete",
