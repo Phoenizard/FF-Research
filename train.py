@@ -180,7 +180,7 @@ def tracking_run(config, args, run_dir, training, counts):
     if config.get("readout") == "random":
         method_name += "-random-readout"
     tracker = wandb.init(
-        **metadata, resume="must" if previous else "never", mode="online",
+        **metadata, resume="must" if previous else "never", mode=args.wandb_mode,
         name=f"{method_name}-{config['dataset']}-seed{config['seed']}",
         group=f"{method_name}-{config['dataset']}", job_type="train",
         config={**config, "environment": {key: training[key] for key in
@@ -315,7 +315,7 @@ def main():
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--cpu-threads", type=int, default=4)
-    parser.add_argument("--wandb-mode", choices=["online", "disabled"], default="online")
+    parser.add_argument("--wandb-mode", choices=["online", "offline", "disabled"], default="online")
     parser.add_argument("--wandb-entity", default="pheonizard-university-of-nottingham")
     parser.add_argument("--wandb-project", default="FF-Research")
     parser.add_argument("--data-root", type=Path,
