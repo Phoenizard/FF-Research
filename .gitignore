@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 data/cifar/
+data/tinyimagenet/
 results/
 tmp/
 .venv/

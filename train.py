@@ -14,7 +14,7 @@ import torch
 import torchvision
 from torch.nn import functional as functional
 
-from data.datasets import cifar_datasets, evaluation_dataset, make_loader
+from data.datasets import image_datasets, evaluation_dataset, make_loader
 from evaluate import (ROOT, accuracy_metrics, build_model, evaluate, parameter_counts,
                       synchronize, write_json, write_result)
 from models.configs import DATASETS, experiment_config
@@ -30,12 +30,16 @@ def seed_run(seed):
 
 
 def build_optimizers(model, config):
-    parameter_groups = [list(conv.parameters()) + list(model.method.goodness[index].parameters())
+    if model.global_bp:
+        parameter_groups = [model.parameters()]
+        settings = [config]
+    else:
+        parameter_groups = [list(conv.parameters()) + list(model.method.goodness[index].parameters())
                         for index, conv in enumerate(model.convs)] + [model.fusion.parameters()]
+        settings = [config] * len(model.convs) + [config["fusion"]]
     if hasattr(model.method, "optimizer_parameters"):
         parameter_groups = [model.method.optimizer_parameters(conv, index, config)
                             for index, conv in enumerate(model.convs)] + [model.fusion.parameters()]
-    settings = [config] * len(model.convs) + [config["fusion"]]
     optimizers = [getattr(torch.optim, setting["optimizer"])(
         parameters, lr=setting["learning_rate"], weight_decay=setting["weight_decay"],
         betas=tuple(setting["betas"]), eps=setting["optimizer_epsilon"])
@@ -50,6 +54,15 @@ def build_optimizers(model, config):
 
 
 def train_step(model, optimizers, images, labels, gradient_clip=None):
+    if model.global_bp:
+        optimizer = optimizers[0]
+        optimizer.zero_grad(set_to_none=True)
+        logits = model(images)
+        loss = functional.cross_entropy(logits, labels)
+        loss.backward()
+        optimizer.step()
+        correct = (logits.detach().argmax(dim=1) == labels).sum().reshape(1)
+        return logits.detach(), loss.detach().reshape(1), correct
     hidden = model.method.prepare_input(images).detach()
     prediction_features = []
     local_losses = []
@@ -96,7 +109,8 @@ def probe_batch(config, device, requested):
         try:
             if device.type == "cuda":
                 torch.cuda.reset_peak_memory_stats(device)
-            images = torch.randn(candidate, 3, 32, 32, device=device)
+            size = config["augmentation"]["crop_size"]
+            images = torch.randn(candidate, 3, size, size, device=device)
             labels = torch.arange(candidate, device=device) % config["num_classes"]
             model.train()
             synchronize(device)
@@ -189,7 +203,7 @@ def run(config, args, device, checkpoint=None):
         raise ValueError("Smoke Test outputs must stay inside the project tmp directory")
     if not checkpoint and run_dir.exists():
         raise FileExistsError(f"Run already exists: {run_dir}; use --resume or another --output")
-    training_data, testing_data = cifar_datasets(config, args.data_root, args.download)
+    training_data, testing_data = image_datasets(config, args.data_root, args.download)
     testing_data = evaluation_dataset(config, training_data, testing_data)
     training_loader = make_loader(training_data, config["batch_size"], config["seed"],
                                   args.workers, True, device)
@@ -229,8 +243,8 @@ def run(config, args, device, checkpoint=None):
             model.train()
             model.method.epoch = epoch
             total = 0
-            correct = torch.zeros(len(model.convs) + 1, dtype=torch.long, device=device)
-            loss_sum = torch.zeros(len(model.convs) + 1, device=device)
+            correct = torch.zeros(len(optimizers), dtype=torch.long, device=device)
+            loss_sum = torch.zeros(len(optimizers), device=device)
             learning_rate = optimizers[0].param_groups[0]["lr"]
             fusion_learning_rate = optimizers[-1].param_groups[0]["lr"]
             if device.type == "cuda":
@@ -290,9 +304,9 @@ def run(config, args, device, checkpoint=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train FF methods on the common CIFAR backbone.")
+    parser = argparse.ArgumentParser(description="Train FF methods on the common dataset backbone.")
     parser.add_argument("--datasets", nargs="+", choices=DATASETS, default=["cifar10", "cifar100"])
-    parser.add_argument("--method", choices=["asge", "bicovg", "cwc", "dtg_ff", "deeperforward", "hcl_ff"],
+    parser.add_argument("--method", choices=["asge", "bicovg", "cwc", "dtg_ff", "deeperforward", "hcl_ff", "bp"],
                         default="asge")
     parser.add_argument("--bicovg-readout", choices=["learnable", "random"], default="learnable",
                         help="BiCovG local linear readout: trainable or fixed at random initialization.")
@@ -304,7 +318,8 @@ def main():
     parser.add_argument("--wandb-mode", choices=["online", "disabled"], default="online")
     parser.add_argument("--wandb-entity", default="pheonizard-university-of-nottingham")
     parser.add_argument("--wandb-project", default="FF-Research")
-    parser.add_argument("--data-root", type=Path, default=ROOT / "data" / "cifar")
+    parser.add_argument("--data-root", type=Path,
+                        help="Download directory; defaults to data/cifar or data/tinyimagenet.")
     parser.add_argument("--output", type=Path, default=ROOT / "results")
     operation = parser.add_mutually_exclusive_group()
     operation.add_argument("--prepare-only", action="store_true")
@@ -314,7 +329,7 @@ def main():
     parser.add_argument("--download", action="store_true")
     args = parser.parse_args()
     torch.set_num_threads(args.cpu_threads)
-    args.seeds = args.seeds or ([1] if args.smoke_test else [1, 2, 3])
+    args.seeds = args.seeds or [1]
     if args.smoke_test:
         args.wandb_mode = "disabled"
         if args.output == ROOT / "results":
@@ -324,7 +339,7 @@ def main():
     if args.prepare_only:
         for dataset in args.datasets:
             config = experiment_config(dataset, 1, args.method)
-            training, testing = cifar_datasets(config, args.data_root, args.download)
+            training, testing = image_datasets(config, args.data_root, args.download)
             print(json.dumps({"dataset": dataset, "train": len(training), "test": len(testing),
                               "normalization": config["normalization"]}))
         return

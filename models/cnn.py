@@ -17,6 +17,7 @@ class LocalCNN(nn.Module):
                 self.convs.append(conv)
                 input_channels = output_channels
         self.method = method
+        self.global_bp = config.get("global_bp", False)
         self.fusion_layers = config["fusion"]["layers"]
         with torch.random.fork_rng(devices=[]):
             torch.manual_seed(config["seed"])
@@ -26,10 +27,12 @@ class LocalCNN(nn.Module):
             nn.init.zeros_(self.fusion.bias)
 
     def fusion_features(self, activations):
-        return activations.detach().mean(dim=(2, 3))
+        features = activations if self.global_bp else activations.detach()
+        return features.mean(dim=(2, 3))
 
     def predict(self, features):
-        return self.fusion(torch.cat([features[layer - 1].detach()
+        return self.fusion(torch.cat([features[layer - 1] if self.global_bp
+                                      else features[layer - 1].detach()
                                       for layer in self.fusion_layers], dim=1))
 
     def forward(self, images, return_local=False):
@@ -37,11 +40,13 @@ class LocalCNN(nn.Module):
         prediction_features = []
         local_logits = []
         for index, conv in enumerate(self.convs):
-            activations = functional.relu(conv(hidden.detach()))
+            activations = functional.relu(conv(hidden if self.global_bp else hidden.detach()))
             prediction_features.append(self.fusion_features(activations))
             activations = self.method.prepare_activations(index, activations)
-            if return_local:
+            if return_local and not self.global_bp:
                 local_logits.append(self.method.local_logits(index, activations))
-            hidden = self.method.propagate(index, activations).detach()
+            hidden = self.method.propagate(index, activations)
+            if not self.global_bp:
+                hidden = hidden.detach()
         logits = self.predict(prediction_features)
         return (logits, local_logits) if return_local else logits

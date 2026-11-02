@@ -25,7 +25,7 @@ class ASGE(nn.Module):
         self.epsilon = config["norm_epsilon"]
         self.dropout = nn.Dropout(config["dropout"])
         self.goodness = nn.ModuleList()
-        spatial_size = 32
+        spatial_size = config["augmentation"]["crop_size"]
         for index, channels in enumerate(config["channels"]):
             self.goodness.append(SpatialGoodness(channels, config["channels"][-1],
                                                 spatial_size, config["num_classes"], config["alpha"]))

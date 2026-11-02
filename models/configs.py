@@ -10,6 +10,7 @@ from methods.HCL_FF import DEFAULTS as HCL_DEFAULTS, LEVELS
 DATASETS = {
     "cifar10": {"num_classes": 10, "channels": [100, 100, 200, 200, 400, 400, 400, 400]},
     "cifar100": {"num_classes": 100, "channels": [100, 100, 200, 200, 400, 400, 400, 400]},
+    "tinyimagenet": {"num_classes": 200, "channels": [200, 200, 200, 200, 400, 400, 400, 400]},
 }
 
 
@@ -59,6 +60,11 @@ def experiment_config(dataset, seed, method="asge"):
         "source": "https://arxiv.org/abs/2509.12394v1",
         "source_commit": "3226665035a15da90c70f3df0a6bc5ea7de326cc",
     }
+    if dataset == "tinyimagenet":
+        config.update(
+            data_split={"train": 100000, "test": 10000, "validation": 0},
+            evaluation_scope="official_validation",
+            augmentation={"crop_size": 64, "padding": 8, "horizontal_flip": 0.5})
     if method in ("bicovg", "cwc", "deeperforward", "hcl_ff"):
         config.update({"bicovg": BICOVG_DEFAULTS, "cwc": CWC_DEFAULTS,
                        "deeperforward": DEEPERFORWARD_DEFAULTS, "hcl_ff": HCL_DEFAULTS}[method])
@@ -67,4 +73,7 @@ def experiment_config(dataset, seed, method="asge"):
         config.update(DTG_DEFAULTS)
     if method == "hcl_ff":
         config["hierarchy_levels"] = LEVELS[dataset].copy()
+    if method == "bp":
+        config.update(global_bp=True, source="common_backbone_global_bp", source_commit=None)
+        config.pop("alpha")
     return config

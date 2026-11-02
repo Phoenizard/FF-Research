@@ -9,9 +9,10 @@ from pathlib import Path
 import torch
 from torch.nn import functional as functional
 
-from data.datasets import cifar_datasets, evaluation_dataset, make_loader
+from data.datasets import image_datasets, evaluation_dataset, make_loader
 from methods.asge import ASGE
 from methods.BiCovG import BiCovG
+from methods.BP import BP
 from methods.CwC import CwC
 from methods.DTG_FF import DTGFF
 from methods.DeeperForward import DeeperForward
@@ -25,7 +26,7 @@ ROOT = Path(__file__).resolve().parent
 def build_model(config):
     method = {"asge": ASGE, "bicovg": BiCovG, "cwc": CwC,
               "dtg_ff": DTGFF, "deeperforward": DeeperForward,
-              "hcl_ff": HCLFF}[config["method"]]
+              "hcl_ff": HCLFF, "bp": BP}[config["method"]]
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(config["seed"])
         return LocalCNN(config, method(config))
@@ -45,6 +46,8 @@ def write_json(path, value):
 
 def accuracy_metrics(correct, total):
     accuracies = (100 * correct.double() / total).tolist()
+    if len(accuracies) == 1:
+        return {"fusion_accuracy": accuracies[0]}
     best_layer = max(range(1, len(accuracies)), key=accuracies.__getitem__)
     return {"fusion_accuracy": accuracies[0],
             **{f"layer_{index}_accuracy": accuracy
@@ -56,7 +59,7 @@ def accuracy_metrics(correct, total):
 def evaluate(model, loader, device):
     model.eval()
     total = 0
-    correct = torch.zeros(len(model.convs) + 1, dtype=torch.long, device=device)
+    correct = torch.zeros(len(model.method.goodness) + 1, dtype=torch.long, device=device)
     loss_sum = torch.zeros((), device=device)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
@@ -116,7 +119,8 @@ def summarize(run_dirs, output):
     for key, entries in groups.items():
         config = json.loads(key)
         accuracies = [result["metrics"]["fusion_accuracy"] for _, result in entries]
-        best_predictions = [result["metrics"]["best_pred_accuracy"] for _, result in entries]
+        best_predictions = [result["metrics"]["best_pred_accuracy"] for _, result in entries
+                            if "best_pred_accuracy" in result["metrics"]]
         rows.append({"dataset": config["dataset"], "method": config["method"],
                      "readout": config.get("readout"),
                      "seeds": ",".join(str(seed) for seed, _ in sorted(entries)),
@@ -126,7 +130,7 @@ def summarize(run_dirs, output):
                      "evaluation_scope": config["evaluation_scope"],
                      "fusion_accuracy_mean": statistics.mean(accuracies),
                      "fusion_accuracy_std": statistics.stdev(accuracies) if len(accuracies) > 1 else None,
-                     "best_pred_accuracy_mean": statistics.mean(best_predictions),
+                     "best_pred_accuracy_mean": statistics.mean(best_predictions) if best_predictions else None,
                      "best_pred_accuracy_std": statistics.stdev(best_predictions)
                      if len(best_predictions) > 1 else None,
                      "batch_size": config["batch_size"], "epochs": config["epochs"],
@@ -151,7 +155,8 @@ def main():
     operation = parser.add_mutually_exclusive_group(required=True)
     operation.add_argument("--checkpoint", type=Path)
     operation.add_argument("--summary", nargs="+", type=Path, metavar="RUN_DIR")
-    parser.add_argument("--data-root", type=Path, default=ROOT / "data" / "cifar")
+    parser.add_argument("--data-root", type=Path,
+                        help="Download directory; defaults to data/cifar or data/tinyimagenet.")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--output", type=Path, default=ROOT / "results" / "benchmark.csv")
@@ -166,7 +171,7 @@ def main():
         raise ValueError("Benchmark evaluation requires the final epoch checkpoint")
     model = build_model(config).to(device)
     model.load_state_dict(checkpoint["model"])
-    training, testing = cifar_datasets(config, args.data_root)
+    training, testing = image_datasets(config, args.data_root)
     testing = evaluation_dataset(config, training, testing)
     loader = make_loader(testing, config["batch_size"], config["seed"], args.workers, False, device)
     metrics = evaluate(model, loader, device)

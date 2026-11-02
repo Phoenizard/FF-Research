@@ -42,7 +42,7 @@ class BiCovG(ASGE):
         self.epsilon = config["norm_epsilon"]
         self.dropout = nn.Dropout(config["dropout"])
         self.goodness = nn.ModuleList()
-        spatial_size = 32
+        spatial_size = config["augmentation"]["crop_size"]
         for index, channels in enumerate(config["channels"]):
             self.goodness.append(BiCovGReadout(channels, spatial_size, config["num_classes"],
                                               config["cc_reduction"],
