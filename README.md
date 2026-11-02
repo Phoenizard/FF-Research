@@ -69,12 +69,13 @@ FF-Research/
 │   ├── cnn.py             # 唯一的共同 CNN 实现
 │   └── configs.py         # 各数据集的固定 Conv 配置
 ├── methods/
-│   ├── bicovg.py
+│   ├── BiCovG.py
 │   ├── asge.py
-│   ├── dtg_ff.py
-│   ├── cwc.py
-│   ├── deeper_forward.py
-│   └── hcl_ff.py
+│   ├── DTG_FF.py
+│   ├── CwC.py
+│   ├── DeeperForward.py
+│   ├── HCL_FF.py
+│   └── BP.py
 ├── train.py               # 共用训练入口
 └── evaluate.py            # 共用评估入口
 ```
