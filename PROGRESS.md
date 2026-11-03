@@ -1,5 +1,14 @@
 阶段1:复现FF已有算法
 
+### 实验设置
+
+| | CIFAR10 | CIFAR100 | TinyIN |
+|---|---|---|---|
+| seed | 1 | 1 | 1 |
+| epochs | 400 | 400 | 400 |
+| batch_size | 128 | 128 | 256 |
+| 设备 | RTX 5070 | RTX 5070 | RTX 4090（AutoDL） |
+
 ### 准确率（%）
 
 | | CIFAR10 | CIFAR100 | TinyIN |

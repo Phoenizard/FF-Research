@@ -311,7 +311,7 @@ def main():
     parser.add_argument("--bicovg-readout", choices=["learnable", "random"], default="learnable",
                         help="BiCovG local linear readout: trainable or fixed at random initialization.")
     parser.add_argument("--seeds", nargs="+", type=int, choices=[1, 2, 3])
-    parser.add_argument("--batch-size", default="128")
+    parser.add_argument("--batch-size", default="256")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--cpu-threads", type=int, default=4)

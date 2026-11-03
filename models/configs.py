@@ -21,7 +21,7 @@ def experiment_config(dataset, seed, method="asge"):
         "method": method,
         "seed": seed,
         "epochs": 400,
-        "batch_size": 128,
+        "batch_size": 256,
         "run_kind": "benchmark",
         "data_split": {"train": 50000, "test": 10000, "validation": 0},
         "evaluation_scope": "official_test",

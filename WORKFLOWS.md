@@ -2,7 +2,7 @@
 
 ## work in autodl
 
-本地写代码，AutoDL 只跑实验。SSH 操作只有三类：更新代码、提交实验、获取结果。W&B 只从本地上传。
+本地写代码，AutoDL 只跑实验。SSH 操作只有三类：更新代码、提交实验、获取结果。
 
 ### 分工
 
@@ -14,7 +14,7 @@
 
 ### 一次性配置
 
-用户配置 SSH 密钥和 `~/.ssh/config` 中的 `autodl` 别名，密码不出现在对话里。AutoDL 仓库位于 `autodl-tmp/FF-Research`。
+用户配置 SSH 密钥，并在每次任务时提供实例地址，密码不出现在对话里。下文命令中的 `autodl` 代表该地址。AutoDL 仓库位于 `autodl-tmp/FF-Research`。
 
 ### ① 更新代码
 
@@ -24,7 +24,7 @@
 git push origin <分支>
 ```
 
-AutoDL 拉取，拉取前开加速，拉取后关闭：
+AutoDL 拉取：
 
 ```bash
 ssh autodl 'cd autodl-tmp/FF-Research && source /etc/network_turbo && git fetch && git checkout <分支> && git pull && unset http_proxy https_proxy && git status -s && git log -1 --oneline'
@@ -34,18 +34,19 @@ ssh autodl 'cd autodl-tmp/FF-Research && source /etc/network_turbo && git fetch 
 
 ### ② 提交实验
 
-1. 向用户列出：方法、数据集、种子、epochs、batch_size、输出位置、W&B 模式（offline）、commit 号；得到明确同意后再执行。
-2. 确认没有其他实验在运行：
+1. 确认没有其他实验在运行：
 
 ```bash
-ssh autodl 'tmux ls'
+ssh autodl 'screen -ls'
 ```
 
-3. 启动，不开加速：
+2. 启动：
 
 ```bash
-ssh autodl 'cd autodl-tmp/FF-Research && mkdir -p results/logs && tmux new -d -s <实验名> "conda activate gpu && python train.py --datasets <数据集> --method <方法> --wandb-mode offline 2>&1 | tee results/logs/<实验名>.log"'
+ssh autodl 'cd autodl-tmp/FF-Research && mkdir -p results/logs && screen -dmS <实验名> bash -c "source /root/miniconda3/etc/profile.d/conda.sh && conda activate gpu && python train.py --datasets <数据集> --method <方法> --seeds <种子> --batch-size <batch_size> --wandb-mode offline > results/logs/<实验名>.log 2>&1"'
 ```
+
+BiCovG 随机 readout 版加 `--bicovg-readout random --output results/bicovg-random`，避免与可学习版的输出目录冲突。
 
 ### ③ 获取结果
 
@@ -75,11 +76,6 @@ wandb sync results/<数据集>/<方法>/seed<种子>/wandb/offline-run-*
 
 ### 规则
 
-- 任一步骤出现报错或与预期不符，立即停止，向用户汇报原始输出。
 - AutoDL 上的 Python 命令一律在 `conda activate gpu` 后执行；安装依赖也在该环境内用 `pip install` 或 `conda install`。
-- 正式实验与 Smoke Test 启动前须用户同意；串行运行，同一时间只跑一项。
-- Smoke Test 只写入 `tmp/`，不产生 W&B 记录。
 - 加速只覆盖 GitHub 和 HuggingFace：AutoDL 访问 GitHub 的 git 操作前 `source /etc/network_turbo`，结束后立即 `unset http_proxy https_proxy`；实验命令不开加速。
-- 实验中断视为异常：只报告日志和现象，不恢复、不重跑。
-- 命令直接执行，不在仓库中新增启动脚本。
 - 实验运行期间 AutoDL 不能关机。
