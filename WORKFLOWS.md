@@ -43,7 +43,7 @@ ssh autodl 'screen -ls'
 2. 启动：
 
 ```bash
-ssh autodl 'cd autodl-tmp/FF-Research && mkdir -p results/logs && screen -dmS <实验名> bash -c "source /root/miniconda3/etc/profile.d/conda.sh && conda activate gpu && python train.py --datasets <数据集> --method <方法> --seeds <种子> --batch-size <batch_size> --wandb-mode offline > results/logs/<实验名>.log 2>&1"'
+ssh autodl 'cd autodl-tmp/FF-Research && mkdir -p results/logs && screen -dmS <实验名> bash -c "source /root/miniconda3/etc/profile.d/conda.sh && conda activate gpu && WANDB_MODE=offline python train.py --datasets <数据集> --method <方法> --seeds <种子> --batch-size <batch_size> --wandb-mode offline > results/logs/<实验名>.log 2>&1"'
 ```
 
 BiCovG 随机 readout 版加 `--bicovg-readout random --output results/bicovg-random`，避免与可学习版的输出目录冲突。
