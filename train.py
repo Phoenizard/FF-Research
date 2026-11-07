@@ -15,7 +15,7 @@ import torchvision
 from torch.nn import functional as functional
 
 from data.datasets import image_datasets, evaluation_dataset, make_loader
-from evaluate import (ROOT, accuracy_metrics, build_model, evaluate, parameter_counts,
+from evaluate import (ROOT, accuracy_metrics, build_model, evaluate, parameter_counts, run_name,
                       synchronize, write_json, write_result)
 from models.configs import DATASETS, experiment_config
 
@@ -176,9 +176,7 @@ def tracking_run(config, args, run_dir, training, counts):
     previous = training.get("wandb")
     metadata = previous or {"id": uuid4().hex[:12], "entity": args.wandb_entity,
                             "project": args.wandb_project}
-    method_name = config["method"]
-    if config.get("readout") == "random":
-        method_name += "-random-readout"
+    method_name = run_name(config)
     tracker = wandb.init(
         **metadata, resume="must" if previous else "never", mode=args.wandb_mode,
         name=f"{method_name}-{config['dataset']}-seed{config['seed']}",
@@ -306,11 +304,15 @@ def run(config, args, device, checkpoint=None):
 def main():
     parser = argparse.ArgumentParser(description="Train FF methods on the common dataset backbone.")
     parser.add_argument("--datasets", nargs="+", choices=DATASETS, default=["cifar10", "cifar100"])
-    parser.add_argument("--method", choices=["asge", "bicovg", "cwc", "dtg_ff", "deeperforward", "hcl_ff", "bp"],
+    parser.add_argument("--method", choices=["asge", "bicovg", "cwc", "dtg_ff", "deeperforward", "hcl_ff", "ttg", "bp"],
                         default="asge")
     parser.add_argument("--bicovg-readout", choices=["learnable", "random"], default="learnable",
                         help="BiCovG local linear readout: trainable or fixed at random initialization.")
+    parser.add_argument("--tree-source", choices=["internal", "published"], default="internal",
+                        help="TTG class tree: built from training class means, or the released HCL-FF tree.")
     parser.add_argument("--seeds", nargs="+", type=int, choices=[1, 2, 3])
+    parser.add_argument("--depth", type=int, choices=[8, 16], default=8,
+                        help="Common backbone depth; 16 repeats each 8-layer item once (cifar100 only).")
     parser.add_argument("--batch-size", default="256")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--workers", type=int, default=4)
@@ -338,7 +340,7 @@ def main():
             parser.error("--smoke-test output must be inside the project tmp directory")
     if args.prepare_only:
         for dataset in args.datasets:
-            config = experiment_config(dataset, 1, args.method)
+            config = experiment_config(dataset, 1, args.method, args.depth)
             training, testing = image_datasets(config, args.data_root, args.download)
             print(json.dumps({"dataset": dataset, "train": len(training), "test": len(testing),
                               "normalization": config["normalization"]}))
@@ -351,9 +353,11 @@ def main():
         run(checkpoint["config"], args, device, checkpoint)
         return
     for dataset in args.datasets:
-        config = experiment_config(dataset, args.seeds[0], args.method)
+        config = experiment_config(dataset, args.seeds[0], args.method, args.depth)
         if args.method == "bicovg":
             config["readout"] = args.bicovg_readout
+        if args.method == "ttg":
+            config["tree_source"] = args.tree_source
         capacity = probe_batch(config, device, args.batch_size)
         print(json.dumps(capacity), flush=True)
         if args.probe_only:
@@ -362,9 +366,11 @@ def main():
             write_json(probe_dir / f"{dataset}_capacity.json", capacity)
             continue
         for seed in args.seeds:
-            config = experiment_config(dataset, seed, args.method)
+            config = experiment_config(dataset, seed, args.method, args.depth)
             if args.method == "bicovg":
                 config["readout"] = args.bicovg_readout
+            if args.method == "ttg":
+                config["tree_source"] = args.tree_source
             config["batch_size"] = capacity["batch_size"]
             if args.smoke_test:
                 config.update(epochs=2, run_kind="smoke-test", evaluation_scope="64_training_images")

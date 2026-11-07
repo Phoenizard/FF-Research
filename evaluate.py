@@ -17,6 +17,7 @@ from methods.CwC import CwC
 from methods.DTG_FF import DTGFF
 from methods.DeeperForward import DeeperForward
 from methods.HCL_FF import HCLFF
+from methods.TTG import TTG
 from models.cnn import LocalCNN
 
 
@@ -26,10 +27,57 @@ ROOT = Path(__file__).resolve().parent
 def build_model(config):
     method = {"asge": ASGE, "bicovg": BiCovG, "cwc": CwC,
               "dtg_ff": DTGFF, "deeperforward": DeeperForward,
-              "hcl_ff": HCLFF, "bp": BP}[config["method"]]
+              "hcl_ff": HCLFF, "ttg": TTG, "bp": BP}[config["method"]]
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(config["seed"])
         return LocalCNN(config, method(config))
+
+
+def run_name(config):
+    method_name = config["method"]
+    if config.get("readout") == "random":
+        method_name += "-random-readout"
+    if config.get("tree_source") == "published":
+        method_name += "-published-tree"
+    if len(config["channels"]) != 8:
+        method_name += f"-{len(config['channels'])}layer"
+    return method_name
+
+
+def upload_wandb(run_dir, method, tree_source, entity, project):
+    """Log a finished run's history.json to W&B as if it had been tracked online, under the given method."""
+    import wandb
+    from models.configs import experiment_config
+
+    run_dir = Path(run_dir)
+    result = json.loads((run_dir / "result.json").read_text())
+    history = json.loads((run_dir / "history.json").read_text())
+    recorded = result["config"]
+    config = experiment_config(recorded["dataset"], recorded["seed"], method, len(recorded["channels"]))
+    if method == "ttg":
+        config["tree_source"] = tree_source
+    config.update(batch_size=recorded["batch_size"], normalization=recorded["normalization"])
+    if len(history) != config["epochs"]:
+        raise ValueError(f"{run_dir} has {len(history)} epochs, expected {config['epochs']}")
+    training = result["training"]
+    method_name = run_name(config)
+    tracker = wandb.init(
+        entity=entity, project=project, name=f"{method_name}-{config['dataset']}-seed{config['seed']}",
+        group=f"{method_name}-{config['dataset']}", job_type="train",
+        config={**config, "environment": {key: training[key] for key in
+                ("python", "torch", "torchvision", "device", "workers", "cpu_threads")},
+                "parameters": result["parameters"]}, save_code=False)
+    tracker.define_metric("epoch")
+    for prefix in ("train/*", "test/*", "time/*", "memory/*"):
+        tracker.define_metric(prefix, step_metric="epoch")
+    for metrics in history:
+        tracker.log(metrics, step=metrics["epoch"])
+    tracker.summary.update({**{f"test/{key}": value for key, value in result["metrics"].items()},
+                            "completed_epochs": config["epochs"],
+                            "time/training_seconds": training["seconds"],
+                            "memory/training_peak_allocated_mib": training["peak_memory_bytes"] / 1024 ** 2})
+    print(json.dumps({"run": str(run_dir), "wandb": tracker.url}))
+    tracker.finish()
 
 
 def synchronize(device):
@@ -155,6 +203,12 @@ def main():
     operation = parser.add_mutually_exclusive_group(required=True)
     operation.add_argument("--checkpoint", type=Path)
     operation.add_argument("--summary", nargs="+", type=Path, metavar="RUN_DIR")
+    operation.add_argument("--wandb-upload", type=Path, metavar="RUN_DIR",
+                           help="Log a finished run directory to W&B under --method.")
+    parser.add_argument("--method", help="Method name for --wandb-upload.")
+    parser.add_argument("--tree-source", choices=["internal", "published"], default="internal")
+    parser.add_argument("--wandb-entity", default="pheonizard-university-of-nottingham")
+    parser.add_argument("--wandb-project", default="FF-Research")
     parser.add_argument("--data-root", type=Path,
                         help="Download directory; defaults to data/cifar or data/tinyimagenet.")
     parser.add_argument("--device", default="cuda")
@@ -163,6 +217,9 @@ def main():
     args = parser.parse_args()
     if args.summary:
         summarize(args.summary, args.output)
+        return
+    if args.wandb_upload:
+        upload_wandb(args.wandb_upload, args.method, args.tree_source, args.wandb_entity, args.wandb_project)
         return
     device = torch.device(args.device)
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=True)

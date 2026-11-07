@@ -4,7 +4,8 @@ from methods.BiCovG import DEFAULTS as BICOVG_DEFAULTS
 from methods.CwC import DEFAULTS as CWC_DEFAULTS
 from methods.DTG_FF import DEFAULTS as DTG_DEFAULTS
 from methods.DeeperForward import DEFAULTS as DEEPERFORWARD_DEFAULTS
-from methods.HCL_FF import DEFAULTS as HCL_DEFAULTS, LEVELS
+from methods.HCL_FF import DEFAULTS as HCL_DEFAULTS, LEVELS, LEVELS_16
+from methods.TTG import DEFAULTS as TTG_DEFAULTS
 
 
 DATASETS = {
@@ -14,7 +15,9 @@ DATASETS = {
 }
 
 
-def experiment_config(dataset, seed, method="asge"):
+def experiment_config(dataset, seed, method="asge", depth=8):
+    if depth not in (8, 16) or (depth == 16 and dataset != "cifar100"):
+        raise ValueError(f"The 16-layer backbone is defined for cifar100 only; got {dataset} depth {depth}")
     config = {
         "dataset": dataset,
         **deepcopy(DATASETS[dataset]),
@@ -71,8 +74,17 @@ def experiment_config(dataset, seed, method="asge"):
         config.pop("alpha")
     if method == "dtg_ff":
         config.update(DTG_DEFAULTS)
+    if method == "ttg":
+        config.update(TTG_DEFAULTS)
+    if depth == 16:
+        # Each item of the 8-layer backbone is repeated once; pools move to the matching layers.
+        config["channels"] = [channels for channels in config["channels"] for _ in range(2)]
+        config["pool_after"] = [2 * index + 1 for index in config["pool_after"]]
+        config["fusion"]["layers"] = list(range(1, 17))
+    if method == "ttg":
+        config["tree_feature_layer"] = len(config["channels"])
     if method == "hcl_ff":
-        config["hierarchy_levels"] = LEVELS[dataset].copy()
+        config["hierarchy_levels"] = (LEVELS if depth == 8 else LEVELS_16)[dataset].copy()
     if method == "bp":
         config.update(global_bp=True, source="common_backbone_global_bp", source_commit=None)
         config.pop("alpha")
