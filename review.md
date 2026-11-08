@@ -563,3 +563,56 @@ H'=
 ```
 
 **投影帮助构造训练信号；这个信号也穿过 Norm 改善当前卷积。下一层接收的仍然是 Norm 后的特征，而不是投影结果。**
+
+## TTG
+
+DTG-FF 的局部训练规则不变，只把每层固定随机读出换成由类别二叉树构造的固定稀疏三元码（Tree-coded Temperature Goodness）。
+
+```text
+卷积 → ReLU
+         ├→ 能量 goodness g = AvgPool(F²)
+         │          ↓
+         │   (g / T_l) · P_l      P_l 固定（树码），偏置为 0，T_l 可学习温度
+         │          ↓
+         │       交叉熵
+         │
+         └→ Pool → LayerNorm → Dropout → detach → 下一层
+```
+
+类别树有 \(K-1\) 个内部节点。节点 \(i\) 的左、右子树叶集合记为 \(A_i, B_i\)。每个节点的左、右两侧各分到 \(m_l=\lfloor D_l/(2(K-1))\rfloor\) 个能量单元（\(D_l\) 为第 \(l\) 层 goodness 维度，单元随机分配）。左侧单元对 \(A_i\) 中的类为 \(+c_k\)、对 \(B_i\) 中的类为 \(-c_k\)，右侧相反，其余类为 0：
+
+\[
+c_k=\sqrt{\frac{D_l}{K\cdot 2m_l\cdot \mathrm{depth}_k}},\qquad
+z_k=\frac{c_k}{T_l}\sum_{i\in\mathrm{anc}(k)}\left(E_i^{\,\mathrm{side}(k)}-E_i^{\,\mathrm{other}}\right)
+\]
+
+\(\mathrm{depth}_k\)：类 \(k\) 到根经过的节点数；\(E_i^{\,\cdot}\)：节点 \(i\) 某一侧单元的能量和。每列平方范数为 \(D_l/K\)，列和为 0。
+
+类别树来源由 `tree_source` 选择：
+
+- `internal`（默认）：前 5 轮用中心化随机码（DTG-FF 随机码按列去均值、缩放到列平方范数 \(D_l/K\)、偏置为 0）；第 5 轮累计最后一层的训练集类均值，第 6 轮第一步做一次平均链接、余弦距离的层次聚类得到类别树，所有层换成树码后不再改变。
+- `published`：从第一步起使用 HCL-FF 作者发布的类别树。
+
+梯度和可学习参数只在本层内，可学习参数只有每层温度。构树是一次性、无梯度的全局配置步骤：最后一层的类均值决定所有层的读出码。
+
+## TTGS
+
+TTG 的局部训练规则不变，只在层间传递中加入两个无参数组件。记 \(u_l=\operatorname{LN}(\operatorname{Pool}_l(F_l))\)；混合位置 \(\mathcal M\) 为第 \(l\) 层输出与第 \(l-1\) 层形状相同的层，其他位置重置为 \(s_l=u_l\)。
+
+\[
+s_l=\xi_l\big(a\,s_{l-1}+\beta\,u_l\big)+(1-\xi_l)\,s_{l-1},\qquad l\in\mathcal M
+\]
+\[
+\beta^2=\tfrac14,\quad a=\sqrt{1-\beta^2},\quad \xi_l\sim\operatorname{Bernoulli}(1-d_l),\quad d_l=\frac{0.5\,l}{L}
+\]
+
+\(\xi_l\) 逐样本抽取，来自独立的私有随机数生成器（每轮以 \(1000\cdot\text{seed}+\text{epoch}\) 重设），不影响数据顺序和 Dropout。评估时用期望系数：
+
+\[
+s_l=\big(d_l+(1-d_l)\,a\big)\,s_{l-1}+(1-d_l)\,\beta\,u_l
+\]
+
+下一层输入为 \(X_{l+1}=\operatorname{Dropout}(\operatorname{stopgrad}(s_l))\)。没有可学习参数，梯度不跨层。
+
+直觉：同形状段内的加权累积相当于无参数的 shortcut，深层仍能取用前面层的信息；按深度递增的 \(d_l\) 相当于沿深度的松弛，越深的层对传递流的修正越小，抑制深层被各自的局部目标拉偏。
+

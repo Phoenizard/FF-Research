@@ -8,9 +8,11 @@
 
 | 位置 | 做什么 | 不做什么 |
 |---|---|---|
-| 本地（Claude Code） | 写代码、提交推送、发 ssh 命令、拉回结果、汇报 | 不跑正式实验；用户未决定不上传 W&B |
+| 本地（Claude Code） | 写代码、提交推送、发 ssh 命令、拉回结果、汇报；用户指定时在本地 RTX 5070 跑实验 | 用户未决定不上传 W&B |
 | GitHub | 代码中转与备份 | — |
 | AutoDL | 拉取代码、在 `gpu` 环境跑实验、写 W&B 离线记录 | 不改代码，不联网上传 W&B |
+
+实验在哪台设备上跑，每次由用户决定。
 
 ### 一次性配置
 
@@ -48,6 +50,12 @@ ssh autodl 'cd autodl-tmp/FF-Research && mkdir -p results/logs && screen -dmS <�
 
 BiCovG 随机 readout 版加 `--bicovg-readout random --output results/bicovg-random`，避免与可学习版的输出目录冲突。
 
+TTG 用 `--method ttg`，默认训练内部自构类别树；外部树版加 `--tree-source published --output results/ttg-published`。
+
+TTGS 用 `--method ttgs --depth 16 --output results/depth16`。
+
+CIFAR-100 16 层骨干加 `--depth 16 --output results/depth16`，避免与 8 层的输出目录冲突。
+
 ### ③ 获取结果
 
 查看进度：
@@ -73,6 +81,12 @@ wandb sync results/<数据集>/<方法>/seed<种子>/wandb/offline-run-*
 ```
 
 不上传的实验保留在本地 `results/`，是否删除由用户决定。
+
+已完成但未记录 W&B 的运行（W&B 关闭时跑的），按其 `result.json` 和 `history.json` 补传：
+
+```bash
+python evaluate.py --wandb-upload <运行目录> --method <方法> [--tree-source published]
+```
 
 ### 规则
 

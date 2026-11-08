@@ -101,9 +101,11 @@ LEVELS = {
     "cifar100": [1, 3, 6, 8, 10, 10, 10, 10],
     "tinyimagenet": [1, 3, 6, 8, 10, 12, 14, 14],
 }
+# 16-layer backbone: the author's CIFAR-100 table min(1 + i, 10), i = 0..16, sampled at round(i * 16 / 15).
+LEVELS_16 = {"cifar100": [1, 2, 3, 4, 5, 6, 7, 8, 10, 10, 10, 10, 10, 10, 10, 10]}
 
 
-def hierarchy_groups(dataset, classes):
+def hierarchy_groups(dataset, classes, hierarchy_levels):
     merges = MERGES[dataset]
     leaves = [[index] for index in range(classes)]
     for left, right in merges:
@@ -114,7 +116,7 @@ def hierarchy_groups(dataset, classes):
         frontier = [child for node in frontier
                     for child in (merges[node - classes] if node >= classes else [node])]
         levels.append([leaves[node] for node in frontier])
-    return [levels[level - 1] for level in LEVELS[dataset]]
+    return [levels[level - 1] for level in hierarchy_levels]
 
 
 class HCLFF(DeeperForward):
@@ -122,7 +124,7 @@ class HCLFF(DeeperForward):
         super().__init__(config)
         self.config = config
         self.epoch = 0
-        groups_by_layer = hierarchy_groups(config["dataset"], self.num_classes)
+        groups_by_layer = hierarchy_groups(config["dataset"], self.num_classes, config["hierarchy_levels"])
         self.goodness = nn.ModuleList()
         for channels, groups in zip(config["channels"], groups_by_layer, strict=True):
             pool_size = 4 if channels <= 100 else 2 if channels <= 400 else 1
