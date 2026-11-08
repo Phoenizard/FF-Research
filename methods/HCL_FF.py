@@ -101,8 +101,10 @@ LEVELS = {
     "cifar100": [1, 3, 6, 8, 10, 10, 10, 10],
     "tinyimagenet": [1, 3, 6, 8, 10, 12, 14, 14],
 }
-# 16-layer backbone: the author's CIFAR-100 table min(1 + i, 10), i = 0..16, sampled at round(i * 16 / 15).
-LEVELS_16 = {"cifar100": [1, 2, 3, 4, 5, 6, 7, 8, 10, 10, 10, 10, 10, 10, 10, 10]}
+# 16-layer backbone: the author's 17-layer table min(1 + i, D), i = 0..16 (D = 10 for CIFAR-100, 14 for
+# Tiny-ImageNet), sampled at round(i * 16 / 15).
+LEVELS_16 = {"cifar100": [1, 2, 3, 4, 5, 6, 7, 8, 10, 10, 10, 10, 10, 10, 10, 10],
+             "tinyimagenet": [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 14, 14, 14]}
 
 
 def hierarchy_groups(dataset, classes, hierarchy_levels):

@@ -312,7 +312,7 @@ def main():
                         help="TTG class tree: built from training class means, or the released HCL-FF tree.")
     parser.add_argument("--seeds", nargs="+", type=int, choices=[1, 2, 3])
     parser.add_argument("--depth", type=int, choices=[8, 16], default=8,
-                        help="Common backbone depth; 16 repeats each 8-layer item once (cifar100 only).")
+                        help="Common backbone depth; 16 repeats each 8-layer item once (cifar100, tinyimagenet).")
     parser.add_argument("--batch-size", default="256")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--workers", type=int, default=4)
