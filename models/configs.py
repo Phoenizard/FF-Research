@@ -5,7 +5,7 @@ from methods.CwC import DEFAULTS as CWC_DEFAULTS
 from methods.DTG_FF import DEFAULTS as DTG_DEFAULTS
 from methods.DeeperForward import DEFAULTS as DEEPERFORWARD_DEFAULTS
 from methods.HCL_FF import DEFAULTS as HCL_DEFAULTS, LEVELS, LEVELS_16
-from methods.TTG import DEFAULTS as TTG_DEFAULTS
+from methods.TTG import DEFAULTS as TTG_DEFAULTS, TTGS_DEFAULTS
 
 
 DATASETS = {
@@ -76,12 +76,14 @@ def experiment_config(dataset, seed, method="asge", depth=8):
         config.update(DTG_DEFAULTS)
     if method == "ttg":
         config.update(TTG_DEFAULTS)
+    if method == "ttgs":
+        config.update(TTGS_DEFAULTS)
     if depth == 16:
         # Each item of the 8-layer backbone is repeated once; pools move to the matching layers.
         config["channels"] = [channels for channels in config["channels"] for _ in range(2)]
         config["pool_after"] = [2 * index + 1 for index in config["pool_after"]]
         config["fusion"]["layers"] = list(range(1, 17))
-    if method == "ttg":
+    if method in ("ttg", "ttgs"):
         config["tree_feature_layer"] = len(config["channels"])
     if method == "hcl_ff":
         config["hierarchy_levels"] = (LEVELS if depth == 8 else LEVELS_16)[dataset].copy()

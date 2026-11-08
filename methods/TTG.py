@@ -136,3 +136,53 @@ class TTG(DTGFF):
                 self.tree_sums += onehot.t() @ features
                 self.tree_counts += onehot.sum(dim=0)
         return loss, logits
+
+
+TTGS_DEFAULTS = {**DEFAULTS, "skip_beta_sq": 0.25, "stochastic_depth_max": 0.5}
+
+
+class TTGS(TTG):
+    """TTG with two parameter-free inter-layer components. Same-shape skip stream: s_l = a*s_{l-1} + beta*u_l
+    (u_l = LN(Pool(F_l)), beta^2 = skip_beta_sq, a = sqrt(1 - beta^2)), reset whenever the shape changes; the stream
+    is detached before it reaches the next layer. Stochastic depth on the mixing step: in training each sample keeps
+    the new contribution with probability 1 - d_l, d_l = stochastic_depth_max * l / L (private generator reseeded
+    with 1000*seed + epoch each epoch); in evaluation the expected coefficients are used."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.skip_beta = config["skip_beta_sq"] ** 0.5
+        self.skip_a = (1.0 - config["skip_beta_sq"]) ** 0.5
+        self.drop_max = config["stochastic_depth_max"]
+        self.depth = len(config["channels"])
+        self._skip_prev = None
+        self._skip_index = None
+        self._drop_generator = None
+        self._drop_epoch = None
+
+    def keep_mask(self, batch, device, drop):
+        if self._drop_generator is None or self._drop_generator.device != device:
+            self._drop_generator = torch.Generator(device=device)
+            self._drop_epoch = None
+        if self._drop_epoch != self.epoch:
+            self._drop_generator.manual_seed(1000 * self.seed + self.epoch)
+            self._drop_epoch = self.epoch
+        return torch.rand((batch, 1, 1, 1), device=device, generator=self._drop_generator) >= drop
+
+    def propagate(self, index, activations):
+        if index in self.pool_after:
+            activations = functional.avg_pool2d(activations, 2)
+        u = functional.layer_norm(activations.permute(0, 2, 3, 1), (activations.shape[1],),
+                                  eps=self.epsilon).permute(0, 3, 1, 2)
+        prev = self._skip_prev
+        if index == 0 or prev is None or self._skip_index != index - 1 or prev.shape != u.shape:
+            stream = u
+        else:
+            drop = self.drop_max * (index + 1) / self.depth
+            if self.training:
+                stream = torch.where(self.keep_mask(u.shape[0], u.device, drop),
+                                     self.skip_a * prev + self.skip_beta * u, prev)
+            else:
+                stream = (drop + (1.0 - drop) * self.skip_a) * prev + ((1.0 - drop) * self.skip_beta) * u
+        self._skip_prev = stream.detach()
+        self._skip_index = index
+        return self.dropout(stream)

@@ -304,7 +304,7 @@ def run(config, args, device, checkpoint=None):
 def main():
     parser = argparse.ArgumentParser(description="Train FF methods on the common dataset backbone.")
     parser.add_argument("--datasets", nargs="+", choices=DATASETS, default=["cifar10", "cifar100"])
-    parser.add_argument("--method", choices=["asge", "bicovg", "cwc", "dtg_ff", "deeperforward", "hcl_ff", "ttg", "bp"],
+    parser.add_argument("--method", choices=["asge", "bicovg", "cwc", "dtg_ff", "deeperforward", "hcl_ff", "ttg", "ttgs", "bp"],
                         default="asge")
     parser.add_argument("--bicovg-readout", choices=["learnable", "random"], default="learnable",
                         help="BiCovG local linear readout: trainable or fixed at random initialization.")
@@ -356,7 +356,7 @@ def main():
         config = experiment_config(dataset, args.seeds[0], args.method, args.depth)
         if args.method == "bicovg":
             config["readout"] = args.bicovg_readout
-        if args.method == "ttg":
+        if args.method in ("ttg", "ttgs"):
             config["tree_source"] = args.tree_source
         capacity = probe_batch(config, device, args.batch_size)
         print(json.dumps(capacity), flush=True)
@@ -369,7 +369,7 @@ def main():
             config = experiment_config(dataset, seed, args.method, args.depth)
             if args.method == "bicovg":
                 config["readout"] = args.bicovg_readout
-            if args.method == "ttg":
+            if args.method in ("ttg", "ttgs"):
                 config["tree_source"] = args.tree_source
             config["batch_size"] = capacity["batch_size"]
             if args.smoke_test:

@@ -595,3 +595,24 @@ z_k=\frac{c_k}{T_l}\sum_{i\in\mathrm{anc}(k)}\left(E_i^{\,\mathrm{side}(k)}-E_i^
 
 梯度和可学习参数只在本层内，可学习参数只有每层温度。构树是一次性、无梯度的全局配置步骤：最后一层的类均值决定所有层的读出码。
 
+## TTGS
+
+TTG 的局部训练规则不变，只在层间传递中加入两个无参数组件。记 \(u_l=\operatorname{LN}(\operatorname{Pool}_l(F_l))\)；混合位置 \(\mathcal M\) 为第 \(l\) 层输出与第 \(l-1\) 层形状相同的层，其他位置重置为 \(s_l=u_l\)。
+
+\[
+s_l=\xi_l\big(a\,s_{l-1}+\beta\,u_l\big)+(1-\xi_l)\,s_{l-1},\qquad l\in\mathcal M
+\]
+\[
+\beta^2=\tfrac14,\quad a=\sqrt{1-\beta^2},\quad \xi_l\sim\operatorname{Bernoulli}(1-d_l),\quad d_l=\frac{0.5\,l}{L}
+\]
+
+\(\xi_l\) 逐样本抽取，来自独立的私有随机数生成器（每轮以 \(1000\cdot\text{seed}+\text{epoch}\) 重设），不影响数据顺序和 Dropout。评估时用期望系数：
+
+\[
+s_l=\big(d_l+(1-d_l)\,a\big)\,s_{l-1}+(1-d_l)\,\beta\,u_l
+\]
+
+下一层输入为 \(X_{l+1}=\operatorname{Dropout}(\operatorname{stopgrad}(s_l))\)。没有可学习参数，梯度不跨层。
+
+直觉：同形状段内的加权累积相当于无参数的 shortcut，深层仍能取用前面层的信息；按深度递增的 \(d_l\) 相当于沿深度的松弛，越深的层对传递流的修正越小，抑制深层被各自的局部目标拉偏。
+

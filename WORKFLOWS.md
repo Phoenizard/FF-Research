@@ -52,6 +52,8 @@ BiCovG 随机 readout 版加 `--bicovg-readout random --output results/bicovg-ra
 
 TTG 用 `--method ttg`，默认训练内部自构类别树；外部树版加 `--tree-source published --output results/ttg-published`。
 
+TTGS 用 `--method ttgs --depth 16 --output results/depth16`。
+
 CIFAR-100 16 层骨干加 `--depth 16 --output results/depth16`，避免与 8 层的输出目录冲突。
 
 ### ③ 获取结果

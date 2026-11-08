@@ -64,7 +64,7 @@ c_M^*=\arg\max_{c\in\mathcal C}\mathrm{Acc}_{val}(M,D,B,c)
 | CIFAR-100（16 层） | 32×32 | `[100,100,100,100,200,200,200,200,400,400,400,400,400,400,400,400]` |
 | Tiny-ImageNet | 64×64 | `[200,200,200,200,400,400,400,400]` |
 
-共 8 个 Conv（CIFAR-100 另设 16 层骨干：8 层配置每项重复一次，Pool 位置对应后移，用 `--depth 16` 选择），每层后接 ReLU；统一 `kernel_size=3`、`stride=1`、`padding=1`、`dilation=1`、`groups=1`、`bias=True`，无残差连接。Pool、Dropout、Norm 按共识一适配，不改变共同 Conv 配置。
+共 8 个 Conv（CIFAR-100 另设 16 层骨干：8 层配置每项重复一次，Pool 位置对应后移，用 `--depth 16` 选择），每层后接 ReLU；统一 `kernel_size=3`、`stride=1`、`padding=1`、`dilation=1`、`groups=1`、`bias=True`，无残差连接。Pool、Dropout、Norm 按共识一适配，不改变共同 Conv 配置。方法可在层间传递中加入无参数的同形状跳连（如 TTGS），梯度仍在层内截断，不改变共同 Conv 配置。
 
 ### 数据划分与增强
 

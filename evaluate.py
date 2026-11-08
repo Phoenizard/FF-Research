@@ -17,7 +17,7 @@ from methods.CwC import CwC
 from methods.DTG_FF import DTGFF
 from methods.DeeperForward import DeeperForward
 from methods.HCL_FF import HCLFF
-from methods.TTG import TTG
+from methods.TTG import TTG, TTGS
 from models.cnn import LocalCNN
 
 
@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parent
 def build_model(config):
     method = {"asge": ASGE, "bicovg": BiCovG, "cwc": CwC,
               "dtg_ff": DTGFF, "deeperforward": DeeperForward,
-              "hcl_ff": HCLFF, "ttg": TTG, "bp": BP}[config["method"]]
+              "hcl_ff": HCLFF, "ttg": TTG, "ttgs": TTGS, "bp": BP}[config["method"]]
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(config["seed"])
         return LocalCNN(config, method(config))
@@ -54,7 +54,7 @@ def upload_wandb(run_dir, method, tree_source, entity, project):
     history = json.loads((run_dir / "history.json").read_text())
     recorded = result["config"]
     config = experiment_config(recorded["dataset"], recorded["seed"], method, len(recorded["channels"]))
-    if method == "ttg":
+    if method in ("ttg", "ttgs"):
         config["tree_source"] = tree_source
     config.update(batch_size=recorded["batch_size"], normalization=recorded["normalization"])
     if len(history) != config["epochs"]:
