@@ -29,7 +29,8 @@ class TinyImageNetValidation(Dataset):
         self.transform = None
         for line in (root / "val_annotations.txt").read_text().splitlines():
             filename, wnid, *_ = line.split()
-            self.samples.append((root / "images" / filename, class_to_idx[wnid]))
+            folder = root / "images" if (root / "images").exists() else root / wnid
+            self.samples.append((folder / filename, class_to_idx[wnid]))
         self.targets = [target for _, target in self.samples]
 
     def __len__(self):
