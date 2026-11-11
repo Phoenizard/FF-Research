@@ -15,7 +15,7 @@ import torchvision
 from torch.nn import functional as functional
 
 from data.datasets import image_datasets, evaluation_dataset, make_loader
-from evaluate import (ROOT, accuracy_metrics, build_model, evaluate, parameter_counts, run_name,
+from evaluate import (ROOT, HPC_ROOT, in_smoke_dir, accuracy_metrics, build_model, evaluate, parameter_counts, run_name,
                       synchronize, write_json, write_result)
 from models.configs import DATASETS, experiment_config
 
@@ -197,11 +197,11 @@ def run(config, args, device, checkpoint=None):
     seed_run(config["seed"])
     run_dir = args.resume.parent if checkpoint else (
         args.output / config["dataset"] / config["method"] / f"seed{config['seed']}")
-    if config["run_kind"] == "smoke-test" and not run_dir.resolve().is_relative_to(ROOT / "tmp"):
-        raise ValueError("Smoke Test outputs must stay inside the project tmp directory")
+    if config["run_kind"] == "smoke-test" and not in_smoke_dir(run_dir):
+        raise ValueError("Smoke Test outputs must stay inside the project tmp directory or HPC smoke directory")
     if not checkpoint and run_dir.exists():
         raise FileExistsError(f"Run already exists: {run_dir}; use --resume or another --output")
-    training_data, testing_data = image_datasets(config, args.data_root, args.download)
+    training_data, testing_data = image_datasets(config, args.data_root, args.download, args.cache_dir)
     testing_data = evaluation_dataset(config, training_data, testing_data)
     training_loader = make_loader(training_data, config["batch_size"], config["seed"],
                                   args.workers, True, device)
@@ -312,7 +312,7 @@ def main():
                         help="TTG class tree: built from training class means, or the released HCL-FF tree.")
     parser.add_argument("--seeds", nargs="+", type=int, choices=[1, 2, 3])
     parser.add_argument("--depth", type=int, choices=[8, 16], default=8,
-                        help="Common backbone depth; 16 repeats each 8-layer item once (cifar100 only).")
+                        help="Common backbone depth; 16 repeats each 8-layer item once (cifar100, tinyimagenet).")
     parser.add_argument("--batch-size", default="256")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--workers", type=int, default=4)
@@ -320,8 +320,9 @@ def main():
     parser.add_argument("--wandb-mode", choices=["online", "offline", "disabled"], default="online")
     parser.add_argument("--wandb-entity", default="pheonizard-university-of-nottingham")
     parser.add_argument("--wandb-project", default="FF-Research")
-    parser.add_argument("--data-root", type=Path,
-                        help="Download directory; defaults to data/cifar or data/tinyimagenet.")
+    parser.add_argument("--data-root", type=Path, required=True, help="Dataset directory.")
+    parser.add_argument("--hpc", action="store_true",
+                        help="Write Smoke Test outputs and the normalization cache under HPC scratch xiaoyi.")
     parser.add_argument("--output", type=Path, default=ROOT / "results")
     operation = parser.add_mutually_exclusive_group()
     operation.add_argument("--prepare-only", action="store_true")
@@ -332,16 +333,18 @@ def main():
     args = parser.parse_args()
     torch.set_num_threads(args.cpu_threads)
     args.seeds = args.seeds or [1]
+    args.cache_dir = HPC_ROOT / "FF-Research" / "tiny-imagenet-200" if args.hpc else None
+    smoke_root = HPC_ROOT / "smoke" if args.hpc else ROOT / "tmp" / "smoke"
     if args.smoke_test:
         args.wandb_mode = "disabled"
         if args.output == ROOT / "results":
-            args.output = ROOT / "tmp" / "smoke" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        if not args.output.resolve().is_relative_to(ROOT / "tmp"):
-            parser.error("--smoke-test output must be inside the project tmp directory")
+            args.output = smoke_root / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        if not in_smoke_dir(args.output):
+            parser.error("--smoke-test output must be inside the project tmp directory or HPC smoke directory")
     if args.prepare_only:
         for dataset in args.datasets:
             config = experiment_config(dataset, 1, args.method, args.depth)
-            training, testing = image_datasets(config, args.data_root, args.download)
+            training, testing = image_datasets(config, args.data_root, args.download, args.cache_dir)
             print(json.dumps({"dataset": dataset, "train": len(training), "test": len(testing),
                               "normalization": config["normalization"]}))
         return
@@ -361,7 +364,7 @@ def main():
         capacity = probe_batch(config, device, args.batch_size)
         print(json.dumps(capacity), flush=True)
         if args.probe_only:
-            probe_dir = ROOT / "tmp" / "smoke" / "capacity"
+            probe_dir = smoke_root / "capacity"
             probe_dir.mkdir(parents=True, exist_ok=True)
             write_json(probe_dir / f"{dataset}_capacity.json", capacity)
             continue

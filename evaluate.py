@@ -22,6 +22,12 @@ from models.cnn import LocalCNN
 
 
 ROOT = Path(__file__).resolve().parent
+HPC_ROOT = Path("/scratch/users/k2366837/xiaoyi")
+
+
+def in_smoke_dir(path):
+    path = Path(path).resolve()
+    return path.is_relative_to(ROOT / "tmp") or path.is_relative_to((HPC_ROOT / "smoke").resolve())
 
 
 def build_model(config):
@@ -156,8 +162,8 @@ def summarize(run_dirs, output):
             continue
         result = json.loads(result_path.read_text())
         config = dict(result["config"])
-        if config["run_kind"] == "smoke-test" and not Path(output).resolve().is_relative_to(ROOT / "tmp"):
-            raise ValueError("Smoke Test summaries must stay inside the project tmp directory")
+        if config["run_kind"] == "smoke-test" and not in_smoke_dir(output):
+            raise ValueError("Smoke Test summaries must stay inside the project tmp directory or HPC smoke directory")
         seed = config.pop("seed")
         key = json.dumps(config, sort_keys=True)
         if any(entry[0] == seed for entry in groups[key]):

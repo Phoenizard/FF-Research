@@ -16,8 +16,8 @@ DATASETS = {
 
 
 def experiment_config(dataset, seed, method="asge", depth=8):
-    if depth not in (8, 16) or (depth == 16 and dataset != "cifar100"):
-        raise ValueError(f"The 16-layer backbone is defined for cifar100 only; got {dataset} depth {depth}")
+    if depth not in (8, 16) or (depth == 16 and dataset not in ("cifar100", "tinyimagenet")):
+        raise ValueError(f"The 16-layer backbone is defined for cifar100 and tinyimagenet only; got {dataset} depth {depth}")
     config = {
         "dataset": dataset,
         **deepcopy(DATASETS[dataset]),
