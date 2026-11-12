@@ -1,5 +1,13 @@
 # AI 工作流
 
+## 诊断
+
+诊断先在 tmp 开发和运行；用户审核结果通过后，迁到 `diagnosis/<主题>/`，在仓库代码上重跑一次，确认数值与 tmp 一致，再写入 PROGRESS。诊断代码、输出（results.json、图、数据）都放在同一个 `diagnosis/<主题>/` 下，进 git。
+
+```bash
+conda run -n gpu python -m diagnosis.<主题>.<名> > results/logs/diagnosis-<名>.log 2>&1
+```
+
 ## work in autodl
 
 本地写代码，AutoDL 只跑实验。SSH 操作只有三类：更新代码、提交实验、获取结果。
