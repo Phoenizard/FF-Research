@@ -17,6 +17,7 @@ from torch.nn import functional as functional
 from data.datasets import image_datasets, evaluation_dataset, make_loader
 from evaluate import (ROOT, HPC_ROOT, in_smoke_dir, accuracy_metrics, build_model, evaluate, parameter_counts, run_name,
                       synchronize, write_json, write_result)
+from models.cnn import ShortcutStream
 from models.configs import DATASETS, experiment_config
 
 
@@ -64,11 +65,13 @@ def train_step(model, optimizers, images, labels, gradient_clip=None):
         correct = (logits.detach().argmax(dim=1) == labels).sum().reshape(1)
         return logits.detach(), loss.detach().reshape(1), correct
     hidden = model.method.prepare_input(images).detach()
+    stream = ShortcutStream(model.shortcut_blocks)
     prediction_features = []
     local_losses = []
     local_correct = []
     for index, (conv, optimizer) in enumerate(zip(model.convs, optimizers[:-1], strict=True)):
         optimizer.zero_grad(set_to_none=True)
+        stream.before(index, hidden)
         activations = functional.relu(conv(hidden.detach()))
         local_features = model.method.prepare_activations(index, activations)
         loss, local_logits = model.method.local_loss(index, local_features, labels)
@@ -81,7 +84,7 @@ def train_step(model, optimizers, images, labels, gradient_clip=None):
         with torch.no_grad():
             local_correct.append((local_logits.argmax(dim=1) == labels).sum())
             prediction_features.append(model.fusion_features(activations))
-            hidden = model.method.propagate(index, local_features).detach()
+            hidden = stream.after(index, model.method.propagate(index, local_features)).detach()
     if gradient_clip is not None:
         parameters = [parameter for optimizer in optimizers[:-1]
                       for group in optimizer.param_groups for parameter in group["params"]]
@@ -311,8 +314,11 @@ def main():
     parser.add_argument("--tree-source", choices=["internal", "published"], default="internal",
                         help="TTG class tree: built from training class means, or the released HCL-FF tree.")
     parser.add_argument("--seeds", nargs="+", type=int, choices=[1, 2, 3])
-    parser.add_argument("--depth", type=int, choices=[8, 16], default=8,
-                        help="Common backbone depth; 16 repeats each 8-layer item once (cifar100, tinyimagenet).")
+    parser.add_argument("--depth", type=int, choices=[8, 16, 31], default=8,
+                        help="Common backbone depth; 16 repeats each 8-layer item once (cifar100, tinyimagenet); "
+                             "31 is the ResNet-32 layout (cifar100, 300 epochs).")
+    parser.add_argument("--shortcut", action="store_true",
+                        help="Identity shortcuts on the ResNet-32 same-shape blocks (--depth 31 only).")
     parser.add_argument("--batch-size", default="256")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--workers", type=int, default=4)
@@ -343,7 +349,7 @@ def main():
             parser.error("--smoke-test output must be inside the project tmp directory or HPC smoke directory")
     if args.prepare_only:
         for dataset in args.datasets:
-            config = experiment_config(dataset, 1, args.method, args.depth)
+            config = experiment_config(dataset, 1, args.method, args.depth, args.shortcut)
             training, testing = image_datasets(config, args.data_root, args.download, args.cache_dir)
             print(json.dumps({"dataset": dataset, "train": len(training), "test": len(testing),
                               "normalization": config["normalization"]}))
@@ -356,7 +362,7 @@ def main():
         run(checkpoint["config"], args, device, checkpoint)
         return
     for dataset in args.datasets:
-        config = experiment_config(dataset, args.seeds[0], args.method, args.depth)
+        config = experiment_config(dataset, args.seeds[0], args.method, args.depth, args.shortcut)
         if args.method == "bicovg":
             config["readout"] = args.bicovg_readout
         if args.method in ("ttg", "ttgs"):
@@ -369,7 +375,7 @@ def main():
             write_json(probe_dir / f"{dataset}_capacity.json", capacity)
             continue
         for seed in args.seeds:
-            config = experiment_config(dataset, seed, args.method, args.depth)
+            config = experiment_config(dataset, seed, args.method, args.depth, args.shortcut)
             if args.method == "bicovg":
                 config["readout"] = args.bicovg_readout
             if args.method in ("ttg", "ttgs"):

@@ -15,9 +15,13 @@ DATASETS = {
 }
 
 
-def experiment_config(dataset, seed, method="asge", depth=8):
-    if depth not in (8, 16) or (depth == 16 and dataset not in ("cifar100", "tinyimagenet")):
+def experiment_config(dataset, seed, method="asge", depth=8, shortcut=False):
+    if depth not in (8, 16, 31) or (depth == 16 and dataset not in ("cifar100", "tinyimagenet")):
         raise ValueError(f"The 16-layer backbone is defined for cifar100 and tinyimagenet only; got {dataset} depth {depth}")
+    if depth == 31 and (dataset != "cifar100" or method == "hcl_ff"):
+        raise ValueError(f"The ResNet-32 backbone (depth 31) is defined for cifar100 without hcl_ff; got {dataset} {method}")
+    if shortcut and depth != 31:
+        raise ValueError("Identity shortcuts are defined for the ResNet-32 backbone (depth 31) only")
     config = {
         "dataset": dataset,
         **deepcopy(DATASETS[dataset]),
@@ -83,6 +87,15 @@ def experiment_config(dataset, seed, method="asge", depth=8):
         config["channels"] = [channels for channels in config["channels"] for _ in range(2)]
         config["pool_after"] = [2 * index + 1 for index in config["pool_after"]]
         config["fusion"]["layers"] = list(range(1, 17))
+    if depth == 31:
+        # ResNet-32 layout (README consensus 4): stem + 3 stages x 10 convs, pools after the channel-changing convs
+        # L12 and L22; identity shortcuts on the 13 same-shape blocks (L12-L13 and L22-L23 change shape).
+        config["channels"] = [100] * 11 + [200] * 10 + [400] * 10
+        config["pool_after"] = [11, 21]
+        config["fusion"]["layers"] = list(range(1, 32))
+        config["epochs"] = 300
+        config["shortcut_blocks"] = ([[first, first + 1] for first in range(2, 32, 2) if first not in (12, 22)]
+                                     if shortcut else [])
     if method in ("ttg", "ttgs"):
         config["tree_feature_layer"] = len(config["channels"])
     if method == "hcl_ff":

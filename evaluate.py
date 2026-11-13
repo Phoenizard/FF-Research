@@ -47,6 +47,8 @@ def run_name(config):
         method_name += "-published-tree"
     if len(config["channels"]) != 8:
         method_name += f"-{len(config['channels'])}layer"
+    if config.get("shortcut_blocks"):
+        method_name += "-shortcut"
     return method_name
 
 
@@ -59,7 +61,8 @@ def upload_wandb(run_dir, method, tree_source, entity, project):
     result = json.loads((run_dir / "result.json").read_text())
     history = json.loads((run_dir / "history.json").read_text())
     recorded = result["config"]
-    config = experiment_config(recorded["dataset"], recorded["seed"], method, len(recorded["channels"]))
+    config = experiment_config(recorded["dataset"], recorded["seed"], method, len(recorded["channels"]),
+                               bool(recorded.get("shortcut_blocks")))
     if method in ("ttg", "ttgs"):
         config["tree_source"] = tree_source
     config.update(batch_size=recorded["batch_size"], normalization=recorded["normalization"])
