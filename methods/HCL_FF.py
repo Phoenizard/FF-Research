@@ -105,6 +105,8 @@ LEVELS = {
 # Tiny-ImageNet), sampled at round(i * 16 / 15).
 LEVELS_16 = {"cifar100": [1, 2, 3, 4, 5, 6, 7, 8, 10, 10, 10, 10, 10, 10, 10, 10],
              "tinyimagenet": [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 14, 14, 14]}
+# CNN32 (31 convs): the same table sampled at round(i * 16 / 30).
+LEVELS_31 = {"cifar100": [1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9] + [10] * 15}
 
 
 def hierarchy_groups(dataset, classes, hierarchy_levels):

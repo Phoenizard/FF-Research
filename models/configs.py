@@ -4,7 +4,7 @@ from methods.BiCovG import DEFAULTS as BICOVG_DEFAULTS
 from methods.CwC import DEFAULTS as CWC_DEFAULTS
 from methods.DTG_FF import DEFAULTS as DTG_DEFAULTS
 from methods.DeeperForward import DEFAULTS as DEEPERFORWARD_DEFAULTS
-from methods.HCL_FF import DEFAULTS as HCL_DEFAULTS, LEVELS, LEVELS_16
+from methods.HCL_FF import DEFAULTS as HCL_DEFAULTS, LEVELS, LEVELS_16, LEVELS_31
 from methods.TTG import DEFAULTS as TTG_DEFAULTS, TTGS_DEFAULTS
 
 
@@ -18,8 +18,8 @@ DATASETS = {
 def experiment_config(dataset, seed, method="asge", depth=8, shortcut=False):
     if depth not in (8, 16, 31) or (depth == 16 and dataset not in ("cifar100", "tinyimagenet")):
         raise ValueError(f"The 16-layer backbone is defined for cifar100 and tinyimagenet only; got {dataset} depth {depth}")
-    if depth == 31 and (dataset != "cifar100" or method == "hcl_ff"):
-        raise ValueError(f"The CNN32 backbone (depth 31) is defined for cifar100 without hcl_ff; got {dataset} {method}")
+    if depth == 31 and dataset != "cifar100":
+        raise ValueError(f"The CNN32 backbone (depth 31) is defined for cifar100 only; got {dataset}")
     if shortcut and depth != 31:
         raise ValueError("Residual shortcuts are defined for the CNN32 backbone (depth 31) only")
     config = {
@@ -99,7 +99,7 @@ def experiment_config(dataset, seed, method="asge", depth=8, shortcut=False):
     if method in ("ttg", "ttgs"):
         config["tree_feature_layer"] = len(config["channels"])
     if method == "hcl_ff":
-        config["hierarchy_levels"] = (LEVELS if depth == 8 else LEVELS_16)[dataset].copy()
+        config["hierarchy_levels"] = {8: LEVELS, 16: LEVELS_16, 31: LEVELS_31}[depth][dataset].copy()
     if method == "bp":
         config.update(global_bp=True, source="common_backbone_global_bp", source_commit=None)
         config.pop("alpha")
