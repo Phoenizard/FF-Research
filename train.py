@@ -316,9 +316,9 @@ def main():
     parser.add_argument("--seeds", nargs="+", type=int, choices=[1, 2, 3])
     parser.add_argument("--depth", type=int, choices=[8, 16, 31], default=8,
                         help="Common backbone depth; 16 repeats each 8-layer item once (cifar100, tinyimagenet); "
-                             "31 is the ResNet-32 layout (cifar100, 300 epochs).")
+                             "31 is CNN32 (cifar100, 300 epochs).")
     parser.add_argument("--shortcut", action="store_true",
-                        help="Identity shortcuts on the ResNet-32 same-shape blocks (--depth 31 only).")
+                        help="Residual shortcuts on the CNN32 same-shape blocks (--depth 31 only).")
     parser.add_argument("--batch-size", default="256")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--workers", type=int, default=4)

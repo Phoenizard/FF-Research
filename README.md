@@ -2,17 +2,27 @@
 
 ## 共识一：训练平台与公平比较
 
+### 结构来源与比较尺度
+
+本项目的 FF 方法都由已有网络结构迁移而来：保留原结构的逐层组件，只把训练方式改为 Forward-Forward 的逐层局部更新。当前平台迁移自 CNN，逐层核心骨架为：
+
+```text
+X_l → Conv → ReLU → Pool（可选）→ Norm → X_l+1
+```
+
+结构是否相同按组件名称判断：同属 Norm 组件即视为一致，不区分 BatchNorm、LayerNorm 或 RMSNorm；Pool 同理。Dropout 不属于核心骨架，是配合 FF 的辅助组件，位置由方法决定，也可以不用。迁移其他架构时，逐层组件必须与该架构的原始设计一致；在 CNN 上加入残差组件称为 CNN + 残差，不称 ResNet。
+
 ### 训练定义与平台
 
 FF 训练不依赖全局 BP，允许当前学习单元内部使用局部反向传播。
 
 ```text
-输入特征 → 卷积 → ReLU
+输入特征 → Conv → ReLU
                   ├→ [FF训练设计] → 更新当前学习单元
-                  └→ Pool → Dropout → Norm → detach → 下一层
+                  └→ Pool（可选）→ Norm → detach → 下一层
 ```
 
-Pool、Dropout、Norm 的形式与参数允许根据 FF 训练设计适配。
+Pool、Norm 的形式与参数，以及是否使用 Dropout 及其位置，允许根据 FF 训练设计适配。
 
 优化器及学习率设置允许按 FF 方法选择。
 
@@ -37,19 +47,19 @@ batch_size 由设备容量决定，在设备上确认可运行后固定，同一
 
 以下最优配置表达式用于自研 FF 方法的研究。
 
-在固定数据集 \(D\) 和卷积骨干 \(B\) 下，比较各 FF 方法经过配套配置适配后的准确率。
+在固定数据集 $D$ 和卷积骨干 $B$ 下，比较各 FF 方法经过配套配置适配后的准确率。
 
-\[
+$$
 c=(\mathrm{Pool},\mathrm{Dropout},\mathrm{Norm},\mathrm{Optimizer},\mathrm{LR\ settings})
-\]
+$$
 
-\[
+$$
 c_M^*=\arg\max_{c\in\mathcal C}\mathrm{Acc}_{val}(M,D,B,c)
-\]
+$$
 
-\[
+$$
 \mathrm{Score}(M;D,B)=\mathrm{Acc}_{test}(M,D,B,c_M^*)
-\]
+$$
 
 自研方法进行配置搜索时，在验证集上选择配置，在测试集上报告结果。计算成本、显存和训练速度另行记录。
 
@@ -98,29 +108,29 @@ c_M^*=\arg\max_{c\in\mathcal C}\mathrm{Acc}_{val}(M,D,B,c)
                                       仅更新 Fusion 参数
 ```
 
-\[
+$$
 F_l=\operatorname{ReLU}(\operatorname{Conv}_l(X_l)),\qquad
 z_{\mathrm{fusion}}=W\operatorname{Concat}_{l\in S}
 \left[\operatorname{GAP}(\operatorname{detach}(F_l))\right]+b
-\]
-\[
+$$
+$$
 \mathcal L_{\mathrm{fusion}}=\operatorname{CE}(z_{\mathrm{fusion}},y),\qquad
 \hat y=\arg\max_k z_{\mathrm{fusion},k}
-\]
+$$
 
 - 统一从 ReLU 后、方法专属 Pool／Dropout／Norm 前取特征，避免不同归一化方式移除不同分类信息。
-- 同一数据集内，统一纳入层集合 \(S\)、特征提取位置、分类器结构、初始化、优化器与学习率配置；实验前固定，不按方法或测试成绩选择。纳入全部层（8 层或 16 层），GAP 拼接后使用一个线性分类器；Kaiming normal、零偏置，AdamW（betas=0.9／0.999，eps=1e-8，weight_decay=0.001），学习率 0.0002 余弦衰减至 0.00001，与骨干同步训练至最后一轮。
+- 同一数据集内，统一纳入层集合 $S$、特征提取位置、分类器结构、初始化、优化器与学习率配置；实验前固定，不按方法或测试成绩选择。纳入全部层（8 层或 16 层），GAP 拼接后使用一个线性分类器；Kaiming normal、零偏置，AdamW（betas=0.9／0.999，eps=1e-8，weight_decay=0.001），学习率 0.0002 余弦衰减至 0.00001，与骨干同步训练至最后一轮。
 - 每个 batch 复用已有卷积特征，更新一次 Fusion；不回传骨干、不为 Fusion 训练增加卷积前向或额外遍历数据集，也不在 epoch 后或训练结束后追加 Fusion 训练。
 - Fusion 的参数量、训练耗时和显存纳入实验成本。它是在线训练的公共评估头，不是训练结束后另行拟合的线性探针。
 - 各算法局部训练规则保持不变；公共 Fusion 与原论文预测器不同之处明确区分，不混用名称或结果。
 
 ### 逐层统计与 Best Pred
 
-\[
+$$
 A_l=\frac{1}{N}\sum_{n=1}^{N}\mathbf 1[\hat y_l(x_n)=y_n],\qquad
 A_{\mathrm{best}}=\max_l A_l,\qquad
 l_{\mathrm{best}}=\arg\max_l A_l
-\]
+$$
 
 - 每个 epoch 累计所有训练样本的 Fusion 与逐层正确数，轮末统一计算正确率及 Best Pred；不逐 batch 取最大后平均，不按样本挑选正确的层。
 - 训练正确率复用训练时已有输出，反映整轮在线训练过程，不重新进行轮末冻结模型评估。统计不参与梯度更新。
@@ -134,7 +144,9 @@ l_{\mathrm{best}}=\arg\max_l A_l
 - 沿用 ASGE 的 RMS Pool、Dropout=0.1、RMSNorm、初始化及数据处理；AdamW，学习率 `2e-4` 余弦降至 `1e-5`，weight_decay=`1e-3`，其余参数不变。
 - 最终成绩取最后一轮 `test/fusion_accuracy`。BP 是端到端对照，不属于 FF；FF 的梯度隔离规则保持不变。
 
-## 共识四：ResNet-32 网络结构
+## 共识四：CNN32 网络结构
+
+CNN 逐层结构加深到 31 个 Conv；Shortcut 列为可选的残差组件（`--shortcut`）。
 
 | Layer | Stage | Input ($C\times H\times W$) | Conv ($k$, $s$, $p$) | Conv output | Pool | Output to next layer | Shortcut | Goodness dim | Params | MACs |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -186,6 +198,6 @@ l_{\mathrm{best}}=\arg\max_l A_l
 | L31 | 3 | 400×8×8 | 3×3, 1, 1 | 400×8×8 | — | 400×8×8 | ⊕ L30 input | 400 | 1,440,400 | 92.16M |
 | **Total** | | | | | | | **13 / 15 blocks** | | **18,009,800** | **2.95G** |
 
-![TTG + 残差在 ResNet-32 上的连接方式](figures/resnet32_residual.png)
+![TTG + 残差在 CNN32 上的连接方式](figures/cnn32_residual.png)
 
-![TTGS 跳连流在 ResNet-32 上的连接方式](figures/ttgs_resnet32_stream.png)
+![TTGS 跳连流在 CNN32 上的连接方式](figures/ttgs_cnn32_stream.png)
