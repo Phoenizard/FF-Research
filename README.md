@@ -148,6 +148,8 @@ $$
 
 CNN 逐层结构加深到 31 个 Conv；Shortcut 列为可选的残差组件（`--shortcut`）。
 
+Tiny-ImageNet 的 CNN32 第一段宽度取 200，与其 8/16 层配置一致，其余相同。
+
 | Layer | Stage | Input ($C\times H\times W$) | Conv ($k$, $s$, $p$) | Conv output | Pool | Output to next layer | Shortcut | Goodness dim | Params | MACs |
 |---|---|---|---|---|---|---|---|---|---|---|
 | L1 | Stem | 3×32×32 | 3×3, 1, 1 | 100×32×32 | — | 100×32×32 | — | 1600 | 2,800 | 2.76M |

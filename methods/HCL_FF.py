@@ -1,6 +1,8 @@
 import math
 
 import torch
+import torch.distributed as dist
+import torch.distributed.nn.functional as dist_nn
 from torch import nn
 from torch.nn import functional as functional
 
@@ -106,7 +108,9 @@ LEVELS = {
 LEVELS_16 = {"cifar100": [1, 2, 3, 4, 5, 6, 7, 8, 10, 10, 10, 10, 10, 10, 10, 10],
              "tinyimagenet": [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 14, 14, 14]}
 # CNN32 (31 convs): the same table sampled at round(i * 16 / 30).
-LEVELS_31 = {"cifar100": [1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9] + [10] * 15}
+LEVELS_31 = {"cifar100": [1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9] + [10] * 15,
+             "tinyimagenet": [1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 10, 10, 11, 11, 12, 12, 13, 13]
+             + [14] * 7}
 
 
 def hierarchy_groups(dataset, classes, hierarchy_levels):
@@ -163,7 +167,15 @@ class HCLFF(DeeperForward):
         classification = functional.cross_entropy(logits @ head.aggregation,
                                                    head.label_map[labels])
         normalized = functional.group_norm(activations, self.num_classes, eps=self.epsilon)
-        embeddings = functional.normalize(head(normalized), dim=1)
+        projected = head[:-1](normalized)
+        if dist.is_initialized() and dist.get_world_size() > 1:
+            # Multi-GPU: BatchNorm1d and the contrastive loss see the whole global batch on every rank. all_gather
+            # sums the returned gradients over ranks, which after gradient averaging equals the single-GPU gradient.
+            projected = torch.cat(dist_nn.all_gather(projected))
+            gathered = [torch.empty_like(labels) for _ in range(dist.get_world_size())]
+            dist.all_gather(gathered, labels)
+            labels = torch.cat(gathered)
+        embeddings = functional.normalize(head[-1](projected), dim=1)
         similarities = embeddings @ embeddings.T / self.temperature()
         diagonal = torch.eye(labels.numel(), dtype=torch.bool, device=labels.device)
         positives = labels[:, None].eq(labels[None, :]) & ~diagonal

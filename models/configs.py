@@ -18,8 +18,8 @@ DATASETS = {
 def experiment_config(dataset, seed, method="asge", depth=8, shortcut=False):
     if depth not in (8, 16, 31) or (depth == 16 and dataset not in ("cifar100", "tinyimagenet")):
         raise ValueError(f"The 16-layer backbone is defined for cifar100 and tinyimagenet only; got {dataset} depth {depth}")
-    if depth == 31 and dataset != "cifar100":
-        raise ValueError(f"The CNN32 backbone (depth 31) is defined for cifar100 only; got {dataset}")
+    if depth == 31 and dataset not in ("cifar100", "tinyimagenet"):
+        raise ValueError(f"The CNN32 backbone (depth 31) is defined for cifar100 and tinyimagenet only; got {dataset}")
     if shortcut and depth != 31:
         raise ValueError("Residual shortcuts are defined for the CNN32 backbone (depth 31) only")
     config = {
@@ -90,7 +90,8 @@ def experiment_config(dataset, seed, method="asge", depth=8, shortcut=False):
     if depth == 31:
         # CNN32 layout (README consensus 4): the CNN per-layer design deepened to 31 convs, stem + 3 stages x 10 convs, pools after the channel-changing convs
         # L12 and L22; identity shortcuts on the 13 same-shape blocks (L12-L13 and L22-L23 change shape).
-        config["channels"] = [100] * 11 + [200] * 10 + [400] * 10
+        # The first stage keeps the dataset's first 8-layer width (100 for CIFAR, 200 for Tiny-ImageNet).
+        config["channels"] = [config["channels"][0]] * 11 + [200] * 10 + [400] * 10
         config["pool_after"] = [11, 21]
         config["fusion"]["layers"] = list(range(1, 32))
         config["epochs"] = 300
