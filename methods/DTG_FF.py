@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from torch.nn import functional as functional
 
-from methods.asge import ASGE
+from methods.asge import ASGE, pooled_energy
 
 
 DEFAULTS = {
@@ -31,7 +31,7 @@ class DTGFF(ASGE):
         head = self.goodness[index]
         temperature = self.temperature_min + (self.temperature_max - self.temperature_min) * \
             head.temperature_logit.sigmoid()
-        goodness = functional.adaptive_avg_pool2d(activations.square(), head.patch_size)
+        goodness = pooled_energy(activations, head.patch_size)
         return (goodness.flatten(1) / temperature) @ head.projection + head.bias
 
     def propagate(self, index, activations):
