@@ -167,6 +167,8 @@ CNN32 的卷积布局取自 ResNet-32（1 个起始 Conv 加 3 段各 10 个 Con
 - 不用于得出“加深是否带来收益”的结论：它与 16 层的差别不只是深度。深度对比使用共识五的 CNN32-depth。
 - 已有的 CNN32 结果保留。
 
+### 逐层结构
+
 | Layer | Stage | Input ($C\times H\times W$) | Conv ($k$, $s$, $p$) | Conv output | Pool | Output to next layer | Shortcut | Goodness dim | Params | MACs |
 |---|---|---|---|---|---|---|---|---|---|---|
 | L1 | Stem | 3×32×32 | 3×3, 1, 1 | 100×32×32 | — | 100×32×32 | — | 1600 | 2,800 | 2.76M |
