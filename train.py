@@ -1,22 +1,28 @@
 import argparse
 import gc
 import json
+import os
 import platform
 import random
+import socket
 import time
 from contextlib import nullcontext
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
 import numpy as np
 import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
 import torchvision
 from torch.nn import functional as functional
+from torch.utils.data import DistributedSampler
 
 from data.datasets import image_datasets, evaluation_dataset, make_loader
 from evaluate import (ROOT, HPC_ROOT, in_smoke_dir, accuracy_metrics, build_model, evaluate, parameter_counts, run_name,
                       synchronize, write_json, write_result)
+from models.cnn import ShortcutStream
 from models.configs import DATASETS, experiment_config
 
 
@@ -27,6 +33,31 @@ def seed_run(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
+
+
+def world_size():
+    return dist.get_world_size() if dist.is_initialized() else 1
+
+
+def is_main():
+    return not dist.is_initialized() or dist.get_rank() == 0
+
+
+def average_gradients(optimizer):
+    """Multi-GPU: average one optimizer's gradients over ranks, giving the single-GPU global-batch gradient."""
+    if world_size() == 1:
+        return
+    gradients = [parameter.grad for group in optimizer.param_groups for parameter in group["params"]
+                 if parameter.grad is not None]
+    if not gradients:
+        return
+    flat = torch.cat([gradient.reshape(-1) for gradient in gradients])
+    dist.all_reduce(flat)
+    flat /= world_size()
+    offset = 0
+    for gradient in gradients:
+        gradient.copy_(flat[offset:offset + gradient.numel()].view_as(gradient))
+        offset += gradient.numel()
 
 
 def build_optimizers(model, config):
@@ -60,19 +91,23 @@ def train_step(model, optimizers, images, labels, gradient_clip=None):
         logits = model(images)
         loss = functional.cross_entropy(logits, labels)
         loss.backward()
+        average_gradients(optimizer)
         optimizer.step()
         correct = (logits.detach().argmax(dim=1) == labels).sum().reshape(1)
         return logits.detach(), loss.detach().reshape(1), correct
     hidden = model.method.prepare_input(images).detach()
+    stream = ShortcutStream(model.shortcut_blocks)
     prediction_features = []
     local_losses = []
     local_correct = []
     for index, (conv, optimizer) in enumerate(zip(model.convs, optimizers[:-1], strict=True)):
         optimizer.zero_grad(set_to_none=True)
+        stream.before(index, hidden)
         activations = functional.relu(conv(hidden.detach()))
         local_features = model.method.prepare_activations(index, activations)
         loss, local_logits = model.method.local_loss(index, local_features, labels)
         loss.backward()
+        average_gradients(optimizer)
         if hasattr(model.method, "clip_gradients"):
             model.method.clip_gradients(index, conv)
         if gradient_clip is None:
@@ -81,7 +116,7 @@ def train_step(model, optimizers, images, labels, gradient_clip=None):
         with torch.no_grad():
             local_correct.append((local_logits.argmax(dim=1) == labels).sum())
             prediction_features.append(model.fusion_features(activations))
-            hidden = model.method.propagate(index, local_features).detach()
+            hidden = stream.after(index, model.method.propagate(index, local_features)).detach()
     if gradient_clip is not None:
         parameters = [parameter for optimizer in optimizers[:-1]
                       for group in optimizer.param_groups for parameter in group["params"]]
@@ -92,6 +127,7 @@ def train_step(model, optimizers, images, labels, gradient_clip=None):
     logits = model.predict(prediction_features)
     prediction_loss = functional.cross_entropy(logits, labels)
     prediction_loss.backward()
+    average_gradients(optimizers[-1])
     optimizers[-1].step()
     correct = torch.stack([(logits.detach().argmax(dim=1) == labels).sum(), *local_correct])
     return logits.detach(), torch.stack(local_losses + [prediction_loss.detach()]), correct
@@ -194,17 +230,27 @@ def tracking_run(config, args, run_dir, training, counts):
 
 
 def run(config, args, device, checkpoint=None):
-    seed_run(config["seed"])
+    world, rank = world_size(), (dist.get_rank() if dist.is_initialized() else 0)
+    seed_run(config["seed"] + rank)
     run_dir = args.resume.parent if checkpoint else (
         args.output / config["dataset"] / config["method"] / f"seed{config['seed']}")
     if config["run_kind"] == "smoke-test" and not in_smoke_dir(run_dir):
         raise ValueError("Smoke Test outputs must stay inside the project tmp directory or HPC smoke directory")
     if not checkpoint and run_dir.exists():
         raise FileExistsError(f"Run already exists: {run_dir}; use --resume or another --output")
+    if world > 1 and rank > 0:
+        dist.barrier()  # rank 0 first: it may download data and write the normalization cache
     training_data, testing_data = image_datasets(config, args.data_root, args.download, args.cache_dir)
+    if world > 1 and rank == 0:
+        dist.barrier()
     testing_data = evaluation_dataset(config, training_data, testing_data)
-    training_loader = make_loader(training_data, config["batch_size"], config["seed"],
-                                  args.workers, True, device)
+    if world > 1:
+        sampler = DistributedSampler(training_data, shuffle=True, seed=config["seed"])
+        training_loader = make_loader(training_data, config["batch_size"] // world, config["seed"] + rank,
+                                      args.workers, False, device, sampler)
+    else:
+        training_loader = make_loader(training_data, config["batch_size"], config["seed"],
+                                      args.workers, True, device)
     testing_loader = make_loader(testing_data, config["batch_size"], config["seed"],
                                  args.workers, False, device)
     model = build_model(config).to(device)
@@ -214,6 +260,8 @@ def run(config, args, device, checkpoint=None):
                 "python": platform.python_version(), "cpu_threads": torch.get_num_threads(),
                 "device": torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu",
                 "workers": args.workers}
+    if world > 1:
+        training["gpus"] = world
     history = []
     start_epoch = 0
     if checkpoint:
@@ -222,22 +270,32 @@ def run(config, args, device, checkpoint=None):
             optimizer.load_state_dict(state)
         for scheduler, state in zip(schedulers, checkpoint["schedulers"], strict=True):
             scheduler.load_state_dict(state)
-        restore_random_state(checkpoint["random_state"], training_loader)
+        if world == 1:
+            restore_random_state(checkpoint["random_state"], training_loader)
         training = checkpoint["training"]
         history = checkpoint["history"]
         start_epoch = checkpoint["epoch"]
         del checkpoint
-    run_dir.mkdir(parents=True, exist_ok=True)
-    write_json(run_dir / "config.json", config)
+    if world > 1:
+        for tensor in model.state_dict().values():
+            dist.broadcast(tensor, 0)
+    if is_main():
+        run_dir.mkdir(parents=True, exist_ok=True)
+        write_json(run_dir / "config.json", config)
     counts = parameter_counts(model)
     evaluation_metrics = None
     evaluation_prefix = "smoke" if config["run_kind"] == "smoke-test" else "test"
     tracking_state = random_state(training_loader)
-    with tracking_run(config, args, run_dir, training, counts) as tracker:
+    with (tracking_run(config, args, run_dir, training, counts) if is_main() else nullcontext(None)) as tracker:
         restore_random_state(tracking_state, training_loader)
-        save_checkpoint(run_dir / "last.pt", config, start_epoch, model, optimizers,
-                        schedulers, training_loader, training, history)
+        if is_main():
+            save_checkpoint(run_dir / "last.pt", config, start_epoch, model, optimizers,
+                            schedulers, training_loader, training, history)
         for epoch in range(start_epoch, config["epochs"]):
+            if world > 1:
+                sampler.set_epoch(epoch)
+                seed_run(1000 * config["seed"] + world * epoch + rank)
+                training_loader.generator.manual_seed(1000 * config["seed"] + world * epoch + rank)
             model.train()
             model.method.epoch = epoch
             total = 0
@@ -263,6 +321,17 @@ def run(config, args, device, checkpoint=None):
             elapsed = time.perf_counter() - started
             training["seconds"] += elapsed
             peak_memory = torch.cuda.max_memory_allocated(device) if device.type == "cuda" else None
+            if world > 1:
+                # Global epoch statistics; peak memory is the largest per-GPU peak.
+                dist.all_reduce(loss_sum)
+                dist.all_reduce(correct)
+                summed = torch.tensor([total], device=device)
+                dist.all_reduce(summed)
+                total = int(summed.item())
+                if peak_memory is not None:
+                    peak = torch.tensor([peak_memory], device=device)
+                    dist.all_reduce(peak, op=dist.ReduceOp.MAX)
+                    peak_memory = int(peak.item())
             if peak_memory is not None:
                 training["peak_memory_bytes"] = max(training["peak_memory_bytes"] or 0, peak_memory)
             mean_losses = (loss_sum / total).tolist()
@@ -275,18 +344,23 @@ def run(config, args, device, checkpoint=None):
                        "time/epoch_seconds": elapsed,
                        "memory/peak_allocated_mib": peak_memory / 1024 ** 2
                        if peak_memory is not None else None}
-            evaluation_metrics = evaluate(model, testing_loader, device)
-            metrics.update({f"{evaluation_prefix}/{key}": value
-                            for key, value in evaluation_metrics.items()})
-            history.append(metrics)
             for scheduler in schedulers:
                 scheduler.step()
-            save_checkpoint(run_dir / "last.pt", config, epoch + 1, model, optimizers,
-                            schedulers, training_loader, training, history)
-            write_json(run_dir / "history.json", history)
-            if tracker is not None:
-                tracker.log(metrics, step=epoch + 1)
-            print(json.dumps({"dataset": config["dataset"], "seed": config["seed"], **metrics}), flush=True)
+            if is_main():
+                evaluation_metrics = evaluate(model, testing_loader, device)
+                metrics.update({f"{evaluation_prefix}/{key}": value
+                                for key, value in evaluation_metrics.items()})
+                history.append(metrics)
+                save_checkpoint(run_dir / "last.pt", config, epoch + 1, model, optimizers,
+                                schedulers, training_loader, training, history)
+                write_json(run_dir / "history.json", history)
+                if tracker is not None:
+                    tracker.log(metrics, step=epoch + 1)
+                print(json.dumps({"dataset": config["dataset"], "seed": config["seed"], **metrics}), flush=True)
+            if world > 1:
+                dist.barrier()
+        if not is_main():
+            return None
         if evaluation_metrics is None:
             evaluation_metrics = evaluate(model, testing_loader, device)
         result = write_result(run_dir, config, model, evaluation_metrics, training, device)
@@ -311,9 +385,14 @@ def main():
     parser.add_argument("--tree-source", choices=["internal", "published"], default="internal",
                         help="TTG class tree: built from training class means, or the released HCL-FF tree.")
     parser.add_argument("--seeds", nargs="+", type=int, choices=[1, 2, 3])
-    parser.add_argument("--depth", type=int, choices=[8, 16], default=8,
-                        help="Common backbone depth; 16 repeats each 8-layer item once (cifar100, tinyimagenet).")
+    parser.add_argument("--depth", type=int, choices=[8, 16, 31], default=8,
+                        help="Common backbone depth; 16 repeats each 8-layer item once (cifar100, tinyimagenet); "
+                             "31 is CNN32 (cifar100, tinyimagenet; 300 epochs).")
+    parser.add_argument("--shortcut", action="store_true",
+                        help="Residual shortcuts on the CNN32 same-shape blocks (--depth 31 only).")
     parser.add_argument("--batch-size", default="256")
+    parser.add_argument("--gpus", type=int, choices=[1, 2, 3, 4], default=1,
+                        help="Data-parallel GPUs on one node; the global --batch-size is split evenly across them.")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--cpu-threads", type=int, default=4)
@@ -343,41 +422,81 @@ def main():
             parser.error("--smoke-test output must be inside the project tmp directory or HPC smoke directory")
     if args.prepare_only:
         for dataset in args.datasets:
-            config = experiment_config(dataset, 1, args.method, args.depth)
+            config = experiment_config(dataset, 1, args.method, args.depth, args.shortcut)
             training, testing = image_datasets(config, args.data_root, args.download, args.cache_dir)
             print(json.dumps({"dataset": dataset, "train": len(training), "test": len(testing),
                               "normalization": config["normalization"]}))
         return
-    device = torch.device(args.device)
-    if device.type == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA is unavailable; run in GPU-enabled WSL")
-    if args.resume:
-        checkpoint = torch.load(args.resume, map_location="cpu", weights_only=True)
-        run(checkpoint["config"], args, device, checkpoint)
+    if args.gpus > 1:
+        if args.device not in ("cuda", "cpu"):
+            parser.error("--gpus > 1 takes --device cuda (one process per visible GPU) or cpu")
+        if args.batch_size == "auto" or int(args.batch_size) % args.gpus:
+            parser.error("--gpus needs an explicit --batch-size divisible by the number of GPUs")
+        if args.device == "cuda" and torch.cuda.device_count() < args.gpus:
+            parser.error(f"--gpus {args.gpus} but only {torch.cuda.device_count()} CUDA devices are visible")
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        mp.spawn(execute, args=(args, smoke_root, port), nprocs=args.gpus)
         return
-    for dataset in args.datasets:
-        config = experiment_config(dataset, args.seeds[0], args.method, args.depth)
-        if args.method == "bicovg":
-            config["readout"] = args.bicovg_readout
-        if args.method in ("ttg", "ttgs"):
-            config["tree_source"] = args.tree_source
-        capacity = probe_batch(config, device, args.batch_size)
-        print(json.dumps(capacity), flush=True)
-        if args.probe_only:
-            probe_dir = smoke_root / "capacity"
-            probe_dir.mkdir(parents=True, exist_ok=True)
-            write_json(probe_dir / f"{dataset}_capacity.json", capacity)
-            continue
-        for seed in args.seeds:
-            config = experiment_config(dataset, seed, args.method, args.depth)
+    execute(0, args, smoke_root, None)
+
+
+def execute(rank, args, smoke_root, port):
+    if port is not None:
+        os.environ.update(MASTER_ADDR="127.0.0.1", MASTER_PORT=str(port))
+        dist.init_process_group("nccl" if args.device == "cuda" else "gloo", rank=rank, world_size=args.gpus,
+                                timeout=timedelta(hours=1))
+        torch.set_num_threads(args.cpu_threads)
+    device = torch.device(f"cuda:{rank}" if port is not None and args.device == "cuda" else args.device)
+    if device.type == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is unavailable; run in GPU-enabled WSL")
+        if port is not None:
+            torch.cuda.set_device(device)
+    world = world_size()
+    try:
+        if args.resume:
+            checkpoint = torch.load(args.resume, map_location="cpu", weights_only=True)
+            if checkpoint["config"].get("gpus", 1) != world:
+                raise ValueError(f"Checkpoint was trained on {checkpoint['config'].get('gpus', 1)} GPUs; "
+                                 f"resume with --gpus {checkpoint['config'].get('gpus', 1)}")
+            run(checkpoint["config"], args, device, checkpoint)
+            return
+        for dataset in args.datasets:
+            config = experiment_config(dataset, args.seeds[0], args.method, args.depth, args.shortcut)
             if args.method == "bicovg":
                 config["readout"] = args.bicovg_readout
             if args.method in ("ttg", "ttgs"):
                 config["tree_source"] = args.tree_source
-            config["batch_size"] = capacity["batch_size"]
-            if args.smoke_test:
-                config.update(epochs=2, run_kind="smoke-test", evaluation_scope="64_training_images")
-            run(config, args, device)
+            requested = args.batch_size if world == 1 else str(int(args.batch_size) // world)
+            capacity = probe_batch(config, device, requested)
+            capacity["batch_size"] *= world
+            if world > 1:
+                capacity["gpus"] = world
+            if is_main():
+                print(json.dumps(capacity), flush=True)
+            if args.probe_only:
+                if is_main():
+                    probe_dir = smoke_root / "capacity"
+                    probe_dir.mkdir(parents=True, exist_ok=True)
+                    write_json(probe_dir / f"{dataset}_capacity.json", capacity)
+                continue
+            for seed in args.seeds:
+                config = experiment_config(dataset, seed, args.method, args.depth, args.shortcut)
+                if args.method == "bicovg":
+                    config["readout"] = args.bicovg_readout
+                if args.method in ("ttg", "ttgs"):
+                    config["tree_source"] = args.tree_source
+                config["batch_size"] = capacity["batch_size"]
+                if world > 1:
+                    config["gpus"] = world
+                if args.smoke_test:
+                    config.update(epochs=2, run_kind="smoke-test", evaluation_scope="64_training_images")
+                run(config, args, device)
+    finally:
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
 
 if __name__ == "__main__":

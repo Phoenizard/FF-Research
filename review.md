@@ -17,30 +17,30 @@ ReLU 特征
 ```
 
 当前层特征：
-\[
+$$
 F_l=\operatorname{ReLU}\!\left(\operatorname{Conv}_{\theta_l}
 (\operatorname{detach}(X_l))\right)
-\]
+$$
 
 BiCovG：
-\[
+$$
 g_l=\operatorname{Concat}_{s\in S_l}
 \left[
 \operatorname{vec}\!\left(\operatorname{AvgPool}_{s}(F_l^2)\right),
 \operatorname{vec}\!\left(\operatorname{AvgPool}_{s}((P_lF_l)^2)\right)
 \right]
-\]
+$$
 
 局部分类与训练：
-\[
+$$
 z_l=W_lg_l+b_l,\qquad
 \mathcal L_l=\operatorname{CE}(z_l,y)
-\]
-\[
+$$
+$$
 \text{由 }\mathcal L_l\text{ 更新 }\{\theta_l,P_l,W_l,b_l\}
-\]
+$$
 
-\(P_l\)：可学习通道投影；\(S_l\)：池化尺度集合；\(\operatorname{AvgPool}_{s}\)：输出为 \(s\times s\) 的自适应平均池化。
+$P_l$：可学习通道投影；$S_l$：池化尺度集合；$\operatorname{AvgPool}_{s}$：输出为 $s\times s$ 的自适应平均池化。
 
 ## ASGE
 
@@ -61,28 +61,28 @@ ReLU 特征
 ```
 
 当前层特征：
-\[
+$$
 F_l=\operatorname{ReLU}\!\left(\operatorname{Conv}_{\theta_l}
 (\operatorname{detach}(X_l))\right)
-\]
+$$
 
 ASGE：
-\[
+$$
 p_l=\min\!\left(\max\!\left(1,\left\lfloor\alpha\frac{C_L}{C_l}\right\rfloor\right),H_l,W_l\right),
 \qquad
 g_l=\operatorname{vec}\!\left(\operatorname{AvgPool}_{p_l}(F_l^2)\right)
-\]
+$$
 
 局部分类与训练：
-\[
+$$
 z_l=W_l^{\mathrm{fixed}}g_l+b_l^{\mathrm{fixed}},\qquad
 \mathcal L_l=\operatorname{CE}(z_l,y)
-\]
-\[
+$$
+$$
 \text{由 }\mathcal L_l\text{ 仅更新 }\theta_l
-\]
+$$
 
-\(C_l,C_L\)：当前层、最后卷积层的通道数；\(H_l,W_l\)：特征图尺寸；\(\alpha\)：划分系数；\(p_l\)：池化输出边长。readout 的权重与偏置随机初始化后固定。
+$C_l,C_L$：当前层、最后卷积层的通道数；$H_l,W_l$：特征图尺寸；$\alpha$：划分系数；$p_l$：池化输出边长。readout 的权重与偏置随机初始化后固定。
 
 [来源：ASGE 方法](https://arxiv.org/html/2509.12394v1#S3)
 
@@ -98,13 +98,13 @@ z_l=W_l^{\mathrm{fixed}}g_l+b_l^{\mathrm{fixed}},\qquad
                                                   仅更新 Fusion 分类器
 ```
 
-\[
+$$
 z_{\mathrm{fusion}}=\sum_{l=2}^{L}
 \left[A_l\operatorname{GAP}(\operatorname{detach}(X_{l+1}))+b_l\right],
 \qquad\mathcal L_{\mathrm{fusion}}=\operatorname{CE}(z_{\mathrm{fusion}},y)
-\]
+$$
 
-\(X_{l+1}\)：第 \(l\) 层经过 Pool／Dropout／Norm 后的传递特征；\(A_l,b_l\)：Fusion 分类器参数。
+$X_{l+1}$：第 $l$ 层经过 Pool／Dropout／Norm 后的传递特征；$A_l,b_l$：Fusion 分类器参数。
 
 [来源：ASGE Prediction Strategies](https://arxiv.org/html/2509.12394v1)、[官方 VGG8 实现](https://github.com/KAI-Laboratory/ASGE/blob/3226665035a15da90c70f3df0a6bc5ea7de326cc/VGG8.py)
 
@@ -127,35 +127,35 @@ ReLU 特征（CNN版）
 ```
 
 当前层特征：
-\[
+$$
 F_l=\operatorname{ReLU}\!\left(\operatorname{Conv}_{\theta_l}
 (\operatorname{detach}(X_l))\right)
-\]
+$$
 
 温度缩放 goodness：
-\[
+$$
 g_l=\operatorname{vec}\!\left(\operatorname{AvgPool}_{(h_l,w_l)}(F_l^2)\right),
 \qquad
 \tilde g_l=\frac{g_l}{T_l}
-\]
-\[
+$$
+$$
 T_l=T_{\min}+(T_{\max}-T_{\min})\sigma(\alpha_l)
-\]
+$$
 
 局部分类与训练：
-\[
+$$
 z_l=W_l^{\mathrm{fixed}}\tilde g_l+b_l^{\mathrm{fixed}},\qquad
 \mathcal L_l=\operatorname{CE}(z_l,y)
-\]
-\[
+$$
+$$
 \text{由 }\mathcal L_l\text{ 更新 }\{\theta_l,\alpha_l\}
-\]
+$$
 
-\((h_l,w_l)\)：池化输出尺寸；\(\alpha_l\)：本层可学习标量；\(\sigma\)：Sigmoid。CNN 版本取 \(T_{\min}=0.5,T_{\max}=2.0\)；readout 的权重与偏置随机初始化后固定。
+$(h_l,w_l)$：池化输出尺寸；$\alpha_l$：本层可学习标量；$\sigma$：Sigmoid。CNN 版本取 $T_{\min}=0.5,T_{\max}=2.0$；readout 的权重与偏置随机初始化后固定。
 
 ### 温度训练
 
-每层初始化 \(\alpha_l=0\)，因此 \(T_l=0.5+1.5\sigma(0)=1.25\)。温度与当前卷积使用同一个局部交叉熵损失训练，无需额外标签或损失。
+每层初始化 $\alpha_l=0$，因此 $T_l=0.5+1.5\sigma(0)=1.25$。温度与当前卷积使用同一个局部交叉熵损失训练，无需额外标签或损失。
 
 ```text
 goodness ÷ T → 固定 readout → 局部交叉熵
@@ -166,18 +166,18 @@ goodness ÷ T → 固定 readout → 局部交叉熵
 ```
 
 温度参数的梯度：
-\[
+$$
 \frac{\partial\mathcal L_l}{\partial\alpha_l}
 =\frac{\partial\mathcal L_l}{\partial T_l}
 \cdot1.5\,\sigma(\alpha_l)\bigl(1-\sigma(\alpha_l)\bigr)
-\]
+$$
 
 由局部优化器更新；以梯度下降形式表示：
-\[
+$$
 \alpha_l\leftarrow\alpha_l-\eta\frac{\partial\mathcal L_l}{\partial\alpha_l}
-\]
+$$
 
-\(\eta\)：学习率。更新 \(\alpha_l\) 后重新计算 \(T_l\)，Sigmoid 将温度约束在 \(0.5\) 到 \(2.0\) 之间。
+$\eta$：学习率。更新 $\alpha_l$ 后重新计算 $T_l$，Sigmoid 将温度约束在 $0.5$ 到 $2.0$ 之间。
 
 [来源：DTG-FF 方法（CNN版）及附录 A.4](https://arxiv.org/html/2606.06539v1#S4)
 
@@ -198,32 +198,32 @@ ReLU 特征 → 池化（按层配置）→ BatchNorm
 ```
 
 当前层特征：
-\[
+$$
 F_l=\operatorname{ReLU}\!\left(\operatorname{Conv}_{\theta_l}
 (\operatorname{detach}(X_l))\right),\qquad
 A_l=\operatorname{BN}_{\phi_l}\!\left(\operatorname{Pool}_l(F_l)\right)
-\]
+$$
 
 通道组平方 goodness：
-\[
+$$
 g_{l,k}=\frac{1}{m_lH_lW_l}
 \sum_{c\in\mathcal G_{l,k}}\sum_{h=1}^{H_l}\sum_{w=1}^{W_l}
 A_{l,c,h,w}^{\,2},\qquad m_l=\frac{C_l}{K}
-\]
+$$
 
 局部分类与训练：
-\[
+$$
 z_l=(g_{l,1},\ldots,g_{l,K}),\qquad
 \mathcal L_l=\operatorname{CE}(z_l,y)
-\]
-\[
+$$
+$$
 \text{由 }\mathcal L_l\text{ 更新当前卷积 }\theta_l
 \text{ 及启用时的 BN 仿射参数 }\phi_l
-\]
+$$
 
-\(K\)：类别数；\(\mathcal G_{l,k}\)：固定对应第 \(k\) 类的通道组；\(C_l,H_l,W_l\)：\(A_l\) 的尺寸。无池化的层取恒等映射；无需线性 readout。
+$K$：类别数；$\mathcal G_{l,k}$：固定对应第 $k$ 类的通道组；$C_l,H_l,W_l$：$A_l$ 的尺寸。无池化的层取恒等映射；无需线性 readout。
 
-共同骨干须满足 \(C_l\bmod K=0\)。这里的 goodness 通道分组不改变 Conv 的 groups；原文另配套 CFSE 分组卷积结构，此处仅列局部训练设计。
+共同骨干须满足 $C_l\bmod K=0$。这里的 goodness 通道分组不改变 Conv 的 groups；原文另配套 CFSE 分组卷积结构，此处仅列局部训练设计。
 
 [来源：CwC 方法](https://ojs.aaai.org/index.php/AAAI/article/view/29369)
 
@@ -244,34 +244,34 @@ ReLU 特征 → 通道均分为 K 组（一类一组）
 ```
 
 当前层特征：
-\[
+$$
 F_l=\operatorname{ReLU}\!\left(\operatorname{Conv}_{\theta_l}
 (\operatorname{detach}(X_l))\right)
-\]
+$$
 
 通道组均值 goodness：
-\[
+$$
 g_{l,k}=\frac{1}{m_lH_lW_l}
 \sum_{c\in\mathcal G_{l,k}}\sum_{h=1}^{H_l}\sum_{w=1}^{W_l}
 F_{l,c,h,w},\qquad m_l=\frac{C_l}{K}
-\]
+$$
 
 局部分类与训练：
-\[
+$$
 z_l=(g_{l,1},\ldots,g_{l,K}),\qquad
 \mathcal L_l=\operatorname{CE}(z_l,y),\qquad
 \text{由 }\mathcal L_l\text{ 仅更新 }\theta_l
-\]
+$$
 
 传递特征时去除组内均值：
-\[
+$$
 Z_{l,c,h,w}=\frac{F_{l,c,h,w}-g_{l,k}}{\sqrt{v_{l,k}+\epsilon}},
 \qquad c\in\mathcal G_{l,k}
-\]
+$$
 
-\(v_{l,k}\)：当前样本第 \(k\) 组内的方差；\(\epsilon\)：数值稳定项。goodness 在归一化前计算；归一化按样本、按组进行，不使用 batch 统计量。下采样使用平均池化，无需下采样时省略。
+$v_{l,k}$：当前样本第 $k$ 组内的方差；$\epsilon$：数值稳定项。goodness 在归一化前计算；归一化按样本、按组进行，不使用 batch 统计量。下采样使用平均池化，无需下采样时省略。
 
-同样要求 \(C_l\bmod K=0\)，无需线性 readout；与 CwC 的核心区别是“不平方的均值 goodness + 按类别组归一化”。
+同样要求 $C_l\bmod K=0$，无需线性 readout；与 CwC 的核心区别是“不平方的均值 goodness + 按类别组归一化”。
 
 [来源：DeeperForward §3.1–3.2](https://proceedings.iclr.cc/paper_files/paper/2025/file/7dd309df03d37643b96f5048b44da798-Paper-Conference.pdf)
 
@@ -294,21 +294,21 @@ DeeperForward 的均值 goodness，加上“分层监督”和“归一化后的
 
 分层监督：浅层区分粗类别，深层逐渐区分细类别。监督对比：在归一化后的特征上，让同类样本接近、异类样本分离，始终使用细类别标签。
 
-\[
+$$
 g_{l,k}=\operatorname{Mean}(F_{l,k}),\qquad
 \hat g_{l,j}=\frac{1}{|S_{l,j}|}\sum_{k\in S_{l,j}}g_{l,k}
-\]
-\[
+$$
+$$
 Z_l=\operatorname{GroupNorm}(F_l;K),\qquad
 h_l=P_l\operatorname{GAP}(Z_l)
-\]
-\[
+$$
+$$
 \boxed{\mathcal L_l
 =\operatorname{CE}(\hat g_l,\hat y_l)
 +\lambda\,\mathcal L_{\mathrm{SupCon}}(h_l,y)}
-\]
+$$
 
-\(F_l\)：当前卷积的 ReLU 输出；\(F_{l,k}\)：第 \(k\) 个细类别通道组；\(S_{l,j}\)：当前层某个粗类别包含的细类别集合；\(\hat y_l\)：对应的粗类别标签；\(P_l\)：可学习投影。
+$F_l$：当前卷积的 ReLU 输出；$F_{l,k}$：第 $k$ 个细类别通道组；$S_{l,j}$：当前层某个粗类别包含的细类别集合；$\hat y_l$：对应的粗类别标签；$P_l$：可学习投影。
 
 两个损失合并后进行本层局部 BP：当前卷积接受两个损失的梯度，投影只接受对比损失的梯度。投影是辅助训练分支，不在通向下一层的主路径上；下一层接收归一化后的特征，而非投影结果。
 
@@ -319,7 +319,7 @@ h_l=P_l\operatorname{GAP}(Z_l)
 把 HCL-FF 的 FF 训练规则接到共同 CNN 骨干上，而不是照搬作者整套网络。
 
 - Conv 的深度、通道数和卷积参数遵守共同配置，原文的残差骨干不自动带入。
-- 共同骨干每层通道数须满足 \(C_l\bmod K=0\)。
+- 共同骨干每层通道数须满足 $C_l\bmod K=0$。
 - 保留分层 goodness 与归一化后对比学习；对比分支在 detach 之前取特征。
 - 按共同网络深度安排粗到细监督，并明确类别层级如何构造。
 
@@ -340,7 +340,7 @@ h_l=P_l\operatorname{GAP}(Z_l)
 
 假设输入是一张猫的图片，当前层 ReLU 输出为：
 
-\[
+$$
 F=
 \begin{bmatrix}
 5&3\\
@@ -355,24 +355,24 @@ F=
 \leftarrow\text{汽车的通道组}\\
 \leftarrow\text{卡车的通道组}
 \end{matrix}
-\]
+$$
 
 这里每行代表两个通道，**不是空间上的一行像素**。
 
 先取每个通道组的均值，得到细类别 goodness：
 
-\[
+$$
 g=
 \begin{bmatrix}
 4&3&2&1
 \end{bmatrix}
-\]
+$$
 
 **浅层：只要求分清“动物／交通工具”**
 
 把细类别 goodness 再按粗类别平均：
 
-\[
+$$
 \hat g=
 \begin{bmatrix}
 (4+3)/2 &(2+1)/2
@@ -381,20 +381,20 @@ g=
 \begin{bmatrix}
 3.5&1.5
 \end{bmatrix}
-\]
+$$
 
 猫属于动物，因此：
 
-\[
+$$
 p(\text{动物})
 =\frac{e^{3.5}}{e^{3.5}+e^{1.5}}
 \approx0.881
-\]
+$$
 
-\[
+$$
 \boxed{\mathcal L_{\text{浅层分类}}
 =-\log p(\text{动物})\approx0.127}
-\]
+$$
 
 **这时猫组高还是狗组高，不是该分类损失关心的重点；动物总体高于交通工具即可。**
 
@@ -402,37 +402,37 @@ p(\text{动物})
 
 若同样的 goodness 出现在采用细类别监督的深层，就直接计算：
 
-\[
+$$
 \boxed{
 \mathcal L_{\text{深层分类}}
 =-\log\frac{e^4}{e^4+e^3+e^2+e^1}
 \approx0.440
 }
-\]
+$$
 
 这时不仅要压过汽车和卡车，**猫也必须压过狗**。这就是“从粗到细”。[原文分层监督](https://arxiv.org/html/2605.24797v1#S3.S2)
 
 #### 2. 对比损失：训练归一化后剩下的特征
 
-上面猫图片的每个通道组，经去均值、除标准差后，忽略 \(\epsilon\)：
+上面猫图片的每个通道组，经去均值、除标准差后，忽略 $\epsilon$：
 
-\[
+$$
 [5,3]\rightarrow[1,-1],\qquad
 [4,2]\rightarrow[1,-1]
-\]
+$$
 
 其他两组也一样，因此：
 
-\[
+$$
 Z_{\text{猫}_1}
 =[1,-1,\;1,-1,\;1,-1,\;1,-1]
-\]
+$$
 
-**原来的组均值 \(4,3,2,1\) 被去掉了；留下的是组内相对变化。**
+**原来的组均值 $4,3,2,1$ 被去掉了；留下的是组内相对变化。**
 
 现在考虑一个含四张图片的 batch。假设归一化后的特征为：
 
-\[
+$$
 Z=
 \begin{bmatrix}
 1&-1& 1&-1& 1&-1& 1&-1\\
@@ -447,26 +447,26 @@ Z=
 \leftarrow\text{汽车}_1\\
 \leftarrow\text{汽车}_2
 \end{matrix}
-\]
+$$
 
-因为空间尺寸是 \(1\times1\)，全局平均池化不改变这些向量。
+因为空间尺寸是 $1\times1$，全局平均池化不改变这些向量。
 
 **可学习投影**
 
-用一个 \(2\times8\) 的矩阵，将 8 维特征投影成 2 维：
+用一个 $2\times8$ 的矩阵，将 8 维特征投影成 2 维：
 
-\[
+$$
 P=
 \begin{bmatrix}
 1&0&0&0&0&0&0&0\\
 0&0&1&0&0&0&0&0
 \end{bmatrix}
 ,\qquad H=ZP^\top
-\]
+$$
 
 得到：
 
-\[
+$$
 H=
 \begin{bmatrix}
 1&1\\
@@ -481,7 +481,7 @@ H=
 \text{汽车}_1\\
 \text{汽车}_2
 \end{matrix}
-\]
+$$
 
 目前两张猫图片的向量互相垂直，**同类还没有聚在一起**。
 
@@ -492,23 +492,23 @@ H=
 - 猫₂：同类，作为正样本。
 - 汽车₁、汽车₂：异类，作为负样本。
 
-使用余弦相似度，令温度 \(\tau=1\)：
+使用余弦相似度，令温度 $\tau=1$：
 
-\[
+$$
 s(\text{猫}_1,\text{猫}_2)=0,\quad
 s(\text{猫}_1,\text{汽车}_1)=0,\quad
 s(\text{猫}_1,\text{汽车}_2)=-1
-\]
+$$
 
 于是：
 
-\[
+$$
 \boxed{
 \mathcal L_{\text{对比},\text{猫}_1}
 =-\log\frac{e^0}{e^0+e^0+e^{-1}}
 \approx0.862
 }
-\]
+$$
 
 它希望：**提高猫₁与猫₂的相似度，降低猫₁与汽车的相似度。**其他样本也分别作为锚点计算。[原文监督对比目标](https://arxiv.org/html/2605.24797v1#S3.S3)
 
@@ -516,17 +516,17 @@ s(\text{猫}_1,\text{汽车}_2)=-1
 
 例如，将投影矩阵变为：
 
-\[
+$$
 P'=
 \begin{bmatrix}
 1&0&0&0&0&0&0&0\\
 0&0&0&0&0&0&0&0
 \end{bmatrix}
-\]
+$$
 
 此时：
 
-\[
+$$
 H'=
 \begin{bmatrix}
 1&0\\
@@ -534,27 +534,27 @@ H'=
 -1&0\\
 -1&0
 \end{bmatrix}
-\]
+$$
 
 两张猫完全同向，两张汽车完全同向，猫与汽车反向：
 
-\[
+$$
 \boxed{
 \mathcal L'_{\text{对比},\text{猫}_1}
 =-\log\frac{e^1}{e^1+e^{-1}+e^{-1}}
 \approx0.240
 }
-\]
+$$
 
-**损失降低了：投影学会保留区分类别的方向，忽略这个例子中无助于分类的方向。**这里的 \(P'\) 只是展示一种降低损失的变化，不是声称一次梯度更新就得到它。
+**损失降低了：投影学会保留区分类别的方向，忽略这个例子中无助于分类的方向。**这里的 $P'$ 只是展示一种降低损失的变化，不是声称一次梯度更新就得到它。
 
 #### 3. 实际训练不是只改变投影
 
-\[
+$$
 \mathcal L_l
 =\mathcal L_{\text{分层分类},l}
 +\lambda\mathcal L_{\text{对比},l}
-\]
+$$
 
 ```text
 分层分类损失 ──────────────→ 更新当前卷积
@@ -579,40 +579,40 @@ DTG-FF 的局部训练规则不变，只把每层固定随机读出换成由类�
          └→ Pool → LayerNorm → Dropout → detach → 下一层
 ```
 
-类别树有 \(K-1\) 个内部节点。节点 \(i\) 的左、右子树叶集合记为 \(A_i, B_i\)。每个节点的左、右两侧各分到 \(m_l=\lfloor D_l/(2(K-1))\rfloor\) 个能量单元（\(D_l\) 为第 \(l\) 层 goodness 维度，单元随机分配）。左侧单元对 \(A_i\) 中的类为 \(+c_k\)、对 \(B_i\) 中的类为 \(-c_k\)，右侧相反，其余类为 0：
+类别树有 $K-1$ 个内部节点。节点 $i$ 的左、右子树叶集合记为 $A_i, B_i$。每个节点的左、右两侧各分到 $m_l=\lfloor D_l/(2(K-1))\rfloor$ 个能量单元（$D_l$ 为第 $l$ 层 goodness 维度，单元随机分配）。左侧单元对 $A_i$ 中的类为 $+c_k$、对 $B_i$ 中的类为 $-c_k$，右侧相反，其余类为 0：
 
-\[
+$$
 c_k=\sqrt{\frac{D_l}{K\cdot 2m_l\cdot \mathrm{depth}_k}},\qquad
 z_k=\frac{c_k}{T_l}\sum_{i\in\mathrm{anc}(k)}\left(E_i^{\,\mathrm{side}(k)}-E_i^{\,\mathrm{other}}\right)
-\]
+$$
 
-\(\mathrm{depth}_k\)：类 \(k\) 到根经过的节点数；\(E_i^{\,\cdot}\)：节点 \(i\) 某一侧单元的能量和。每列平方范数为 \(D_l/K\)，列和为 0。
+$\mathrm{depth}_k$：类 $k$ 到根经过的节点数；$E_i^{\,\cdot}$：节点 $i$ 某一侧单元的能量和。每列平方范数为 $D_l/K$，列和为 0。
 
 类别树来源由 `tree_source` 选择：
 
-- `internal`（默认）：前 5 轮用中心化随机码（DTG-FF 随机码按列去均值、缩放到列平方范数 \(D_l/K\)、偏置为 0）；第 5 轮累计最后一层的训练集类均值，第 6 轮第一步做一次平均链接、余弦距离的层次聚类得到类别树，所有层换成树码后不再改变。
+- `internal`（默认）：前 5 轮用中心化随机码（DTG-FF 随机码按列去均值、缩放到列平方范数 $D_l/K$、偏置为 0）；第 5 轮累计最后一层的训练集类均值，第 6 轮第一步做一次平均链接、余弦距离的层次聚类得到类别树，所有层换成树码后不再改变。
 - `published`：从第一步起使用 HCL-FF 作者发布的类别树。
 
 梯度和可学习参数只在本层内，可学习参数只有每层温度。构树是一次性、无梯度的全局配置步骤：最后一层的类均值决定所有层的读出码。
 
 ## TTGS
 
-TTG 的局部训练规则不变，只在层间传递中加入两个无参数组件。记 \(u_l=\operatorname{LN}(\operatorname{Pool}_l(F_l))\)；混合位置 \(\mathcal M\) 为第 \(l\) 层输出与第 \(l-1\) 层形状相同的层，其他位置重置为 \(s_l=u_l\)。
+TTG 的局部训练规则不变，只在层间传递中加入两个无参数组件。记 $u_l=\operatorname{LN}(\operatorname{Pool}_l(F_l))$；混合位置 $\mathcal M$ 为第 $l$ 层输出与第 $l-1$ 层形状相同的层，其他位置重置为 $s_l=u_l$。
 
-\[
+$$
 s_l=\xi_l\big(a\,s_{l-1}+\beta\,u_l\big)+(1-\xi_l)\,s_{l-1},\qquad l\in\mathcal M
-\]
-\[
+$$
+$$
 \beta^2=\tfrac14,\quad a=\sqrt{1-\beta^2},\quad \xi_l\sim\operatorname{Bernoulli}(1-d_l),\quad d_l=\frac{0.5\,l}{L}
-\]
+$$
 
-\(\xi_l\) 逐样本抽取，来自独立的私有随机数生成器（每轮以 \(1000\cdot\text{seed}+\text{epoch}\) 重设），不影响数据顺序和 Dropout。评估时用期望系数：
+$\xi_l$ 逐样本抽取，来自独立的私有随机数生成器（每轮以 $1000\cdot\text{seed}+\text{epoch}$ 重设），不影响数据顺序和 Dropout。评估时用期望系数：
 
-\[
+$$
 s_l=\big(d_l+(1-d_l)\,a\big)\,s_{l-1}+(1-d_l)\,\beta\,u_l
-\]
+$$
 
-下一层输入为 \(X_{l+1}=\operatorname{Dropout}(\operatorname{stopgrad}(s_l))\)。没有可学习参数，梯度不跨层。
+下一层输入为 $X_{l+1}=\operatorname{Dropout}(\operatorname{stopgrad}(s_l))$。没有可学习参数，梯度不跨层。
 
-直觉：同形状段内的加权累积相当于无参数的 shortcut，深层仍能取用前面层的信息；按深度递增的 \(d_l\) 相当于沿深度的松弛，越深的层对传递流的修正越小，抑制深层被各自的局部目标拉偏。
+直觉：同形状段内的加权累积相当于无参数的 shortcut，深层仍能取用前面层的信息；按深度递增的 $d_l$ 相当于沿深度的松弛，越深的层对传递流的修正越小，抑制深层被各自的局部目标拉偏。
 

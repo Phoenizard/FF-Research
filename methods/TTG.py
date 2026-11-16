@@ -2,6 +2,7 @@ import json
 import time
 
 import torch
+import torch.distributed as dist
 from scipy.cluster.hierarchy import linkage
 from torch.nn import functional as functional
 
@@ -120,9 +121,10 @@ class TTG(DTGFF):
         if self.tree_sums.is_cuda:
             torch.cuda.synchronize()
         self.tree_build_seconds.fill_(time.perf_counter() - started)
-        print(json.dumps({"ttg_tree_built_epoch": self.epoch + 1,
-                          "build_seconds": float(self.tree_build_seconds),
-                          "merges": self.tree_merges.tolist()}), flush=True)
+        if not dist.is_initialized() or dist.get_rank() == 0:
+            print(json.dumps({"ttg_tree_built_epoch": self.epoch + 1,
+                              "build_seconds": float(self.tree_build_seconds),
+                              "merges": self.tree_merges.tolist()}), flush=True)
 
     def local_loss(self, index, activations, labels):
         if self.training and index == 0 and not self.built and self.epoch >= self.build_epoch:
@@ -133,8 +135,13 @@ class TTG(DTGFF):
             with torch.no_grad():
                 features = activations.detach().mean(dim=(2, 3)).double()
                 onehot = functional.one_hot(labels, self.classes).double()
-                self.tree_sums += onehot.t() @ features
-                self.tree_counts += onehot.sum(dim=0)
+                sums, counts = onehot.t() @ features, onehot.sum(dim=0)
+                if dist.is_initialized() and dist.get_world_size() > 1:
+                    # Multi-GPU: every rank adds the global increment, so checkpoints hold global sums.
+                    dist.all_reduce(sums)
+                    dist.all_reduce(counts)
+                self.tree_sums += sums
+                self.tree_counts += counts
         return loss, logits
 
 
@@ -166,7 +173,10 @@ class TTGS(TTG):
         if self._drop_epoch != self.epoch:
             self._drop_generator.manual_seed(1000 * self.seed + self.epoch)
             self._drop_epoch = self.epoch
-        return torch.rand((batch, 1, 1, 1), device=device, generator=self._drop_generator) >= drop
+        # Multi-GPU: every rank draws the whole global batch from the same generator and keeps its own slice.
+        world, rank = (dist.get_world_size(), dist.get_rank()) if dist.is_initialized() else (1, 0)
+        keep = torch.rand((batch * world, 1, 1, 1), device=device, generator=self._drop_generator) >= drop
+        return keep[rank * batch:(rank + 1) * batch]
 
     def propagate(self, index, activations):
         if index in self.pool_after:

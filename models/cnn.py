@@ -3,6 +3,22 @@ from torch import nn
 from torch.nn import functional as functional
 
 
+class ShortcutStream:
+    """Identity shortcuts over [first, second] conv pairs (1-based, config "shortcut_blocks"): the tensor entering the
+    first conv is added, unit weight, to the second conv's propagated output. Shared by forward and train_step."""
+
+    def __init__(self, blocks):
+        self.seconds = {second - 1: first - 1 for first, second in blocks}
+        self.block_input = None
+
+    def before(self, index, hidden):
+        if index in self.seconds.values():
+            self.block_input = hidden
+
+    def after(self, index, hidden):
+        return hidden + self.block_input if index in self.seconds else hidden
+
+
 class LocalCNN(nn.Module):
     def __init__(self, config, method):
         super().__init__()
@@ -19,6 +35,7 @@ class LocalCNN(nn.Module):
         self.method = method
         self.global_bp = config.get("global_bp", False)
         self.fusion_layers = config["fusion"]["layers"]
+        self.shortcut_blocks = config.get("shortcut_blocks", [])
         with torch.random.fork_rng(devices=[]):
             torch.manual_seed(config["seed"])
             self.fusion = nn.Linear(sum(config["channels"][layer - 1]
@@ -37,15 +54,18 @@ class LocalCNN(nn.Module):
 
     def forward(self, images, return_local=False):
         hidden = self.method.prepare_input(images)
+        stream = ShortcutStream(self.shortcut_blocks)
         prediction_features = []
         local_logits = []
         for index, conv in enumerate(self.convs):
-            activations = functional.relu(conv(hidden if self.global_bp else hidden.detach()))
+            hidden = hidden if self.global_bp else hidden.detach()
+            stream.before(index, hidden)
+            activations = functional.relu(conv(hidden))
             prediction_features.append(self.fusion_features(activations))
             activations = self.method.prepare_activations(index, activations)
             if return_local and not self.global_bp:
                 local_logits.append(self.method.local_logits(index, activations))
-            hidden = self.method.propagate(index, activations)
+            hidden = stream.after(index, self.method.propagate(index, activations))
             if not self.global_bp:
                 hidden = hidden.detach()
         logits = self.predict(prediction_features)

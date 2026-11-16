@@ -1,3 +1,4 @@
+import torch.distributed as dist
 from torch import nn
 
 from methods.asge import ASGE
@@ -23,10 +24,12 @@ class CwC(ASGE):
     def __init__(self, config):
         nn.Module.__init__(self)
         self.num_classes = config["num_classes"]
+        # Multi-GPU: batch statistics over the whole global batch (same state_dict keys as BatchNorm2d).
+        norm = nn.SyncBatchNorm if dist.is_initialized() and dist.get_world_size() > 1 else nn.BatchNorm2d
         self.goodness = nn.ModuleList([
             nn.Sequential(
                 nn.MaxPool2d(2) if index in config["pool_after"] else nn.Identity(),
-                nn.BatchNorm2d(channels, eps=config["norm_epsilon"],
+                norm(channels, eps=config["norm_epsilon"],
                                momentum=config["norm_momentum"]),
             )
             for index, channels in enumerate(config["channels"])

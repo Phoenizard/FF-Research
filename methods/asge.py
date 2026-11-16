@@ -5,6 +5,32 @@ from torch import nn
 from torch.nn import functional as functional
 
 
+class _PooledEnergy(torch.autograd.Function):
+    """adaptive_avg_pool2d(F^2, patch) with the backward of both steps fused: dF = F * 2 * dg / block_size.
+    Same values and gradients as the two autograd steps, without their full-size temporaries."""
+
+    @staticmethod
+    def forward(ctx, activations, patch):
+        ctx.save_for_backward(activations)
+        ctx.patch = patch
+        return functional.adaptive_avg_pool2d(activations.square(), patch)
+
+    @staticmethod
+    def backward(ctx, gradient):
+        (activations,) = ctx.saved_tensors
+        batch, channels, height, width = activations.shape
+        patch, block_h, block_w = ctx.patch, height // ctx.patch, width // ctx.patch
+        scaled = (gradient * (2.0 / (block_h * block_w))).reshape(batch, channels, patch, 1, patch, 1)
+        blocks = activations.reshape(batch, channels, patch, block_h, patch, block_w)
+        return (blocks * scaled).reshape(batch, channels, height, width), None
+
+
+def pooled_energy(activations, patch):
+    if activations.shape[2] % patch or activations.shape[3] % patch:
+        return functional.adaptive_avg_pool2d(activations.square(), patch)
+    return _PooledEnergy.apply(activations, patch)
+
+
 class SpatialGoodness(nn.Module):
     def __init__(self, channels, last_channels, spatial_size, classes, alpha):
         super().__init__()
@@ -14,7 +40,7 @@ class SpatialGoodness(nn.Module):
         self.register_buffer("bias", torch.randn(classes) / math.sqrt(classes))
 
     def forward(self, activations):
-        goodness = functional.adaptive_avg_pool2d(activations.square(), self.patch_size)
+        goodness = pooled_energy(activations, self.patch_size)
         return goodness.flatten(1) @ self.projection + self.bias
 
 

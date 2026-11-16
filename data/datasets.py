@@ -128,7 +128,7 @@ def evaluation_dataset(config, training, testing):
     return Subset(evaluation, range(min(64, len(evaluation))))
 
 
-def make_loader(dataset, batch_size, seed, workers, shuffle, device):
-    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=workers,
+def make_loader(dataset, batch_size, seed, workers, shuffle, device, sampler=None):
+    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, sampler=sampler, num_workers=workers,
                       pin_memory=device.type == "cuda", worker_init_fn=seed_worker,
                       generator=torch.Generator().manual_seed(seed), drop_last=False)
