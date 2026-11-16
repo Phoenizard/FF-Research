@@ -4,7 +4,7 @@ from methods.BiCovG import DEFAULTS as BICOVG_DEFAULTS
 from methods.CwC import DEFAULTS as CWC_DEFAULTS
 from methods.DTG_FF import DEFAULTS as DTG_DEFAULTS
 from methods.DeeperForward import DEFAULTS as DEEPERFORWARD_DEFAULTS
-from methods.HCL_FF import DEFAULTS as HCL_DEFAULTS, LEVELS, LEVELS_16, LEVELS_31
+from methods.HCL_FF import DEFAULTS as HCL_DEFAULTS, LEVELS, LEVELS_16, LEVELS_31, LEVELS_32
 from methods.TTG import DEFAULTS as TTG_DEFAULTS, TTGS_DEFAULTS
 
 
@@ -16,8 +16,9 @@ DATASETS = {
 
 
 def experiment_config(dataset, seed, method="asge", depth=8, shortcut=False):
-    if depth not in (8, 16, 31) or (depth == 16 and dataset not in ("cifar100", "tinyimagenet")):
-        raise ValueError(f"The 16-layer backbone is defined for cifar100 and tinyimagenet only; got {dataset} depth {depth}")
+    if depth not in (8, 16, 31, 32) or (depth in (16, 32) and dataset not in ("cifar100", "tinyimagenet")):
+        raise ValueError(f"The 16-layer and CNN32-depth backbones are defined for cifar100 and tinyimagenet only; "
+                         f"got {dataset} depth {depth}")
     if depth == 31 and dataset not in ("cifar100", "tinyimagenet"):
         raise ValueError(f"The CNN32 backbone (depth 31) is defined for cifar100 and tinyimagenet only; got {dataset}")
     if shortcut and depth != 31:
@@ -82,11 +83,13 @@ def experiment_config(dataset, seed, method="asge", depth=8, shortcut=False):
         config.update(TTG_DEFAULTS)
     if method == "ttgs":
         config.update(TTGS_DEFAULTS)
-    if depth == 16:
-        # Each item of the 8-layer backbone is repeated once; pools move to the matching layers.
-        config["channels"] = [channels for channels in config["channels"] for _ in range(2)]
-        config["pool_after"] = [2 * index + 1 for index in config["pool_after"]]
-        config["fusion"]["layers"] = list(range(1, 17))
+    if depth in (16, 32):
+        # Each item of the 8-layer backbone is repeated (2 convs per item at depth 16, 4 at depth 32, the
+        # CNN32-depth backbone of README consensus 5); pools move to the matching layers.
+        repeat = depth // 8
+        config["channels"] = [channels for channels in config["channels"] for _ in range(repeat)]
+        config["pool_after"] = [repeat * index + repeat - 1 for index in config["pool_after"]]
+        config["fusion"]["layers"] = list(range(1, depth + 1))
     if depth == 31:
         # CNN32 layout (README consensus 4): the CNN per-layer design deepened to 31 convs, stem + 3 stages x 10 convs, pools after the channel-changing convs
         # L12 and L22; identity shortcuts on the 13 same-shape blocks (L12-L13 and L22-L23 change shape).
@@ -100,7 +103,7 @@ def experiment_config(dataset, seed, method="asge", depth=8, shortcut=False):
     if method in ("ttg", "ttgs"):
         config["tree_feature_layer"] = len(config["channels"])
     if method == "hcl_ff":
-        config["hierarchy_levels"] = {8: LEVELS, 16: LEVELS_16, 31: LEVELS_31}[depth][dataset].copy()
+        config["hierarchy_levels"] = {8: LEVELS, 16: LEVELS_16, 31: LEVELS_31, 32: LEVELS_32}[depth][dataset].copy()
     if method == "bp":
         config.update(global_bp=True, source="common_backbone_global_bp", source_commit=None)
         config.pop("alpha")
