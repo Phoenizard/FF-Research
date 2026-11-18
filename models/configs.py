@@ -104,7 +104,13 @@ def experiment_config(dataset, seed, method="asge", depth=8, shortcut=False):
         config["tree_feature_layer"] = len(config["channels"])
     if method == "hcl_ff":
         config["hierarchy_levels"] = {8: LEVELS, 16: LEVELS_16, 31: LEVELS_31, 32: LEVELS_32}[depth][dataset].copy()
-    if method == "bp":
+    if method in ("bp", "lastbp"):
         config.update(global_bp=True, source="common_backbone_global_bp", source_commit=None)
         config.pop("alpha")
+    if method == "lastbp":
+        # Global BP whose trainable head reads only the last layer; the Fusion head becomes read-only.
+        config.update(source="common_backbone_last_layer_bp",
+                      bp_head={"layers": [len(config["channels"])],
+                               "feature_location": "relu_before_pool_dropout_norm",
+                               "initialization": "kaiming_normal_relu_zero_bias"})
     return config

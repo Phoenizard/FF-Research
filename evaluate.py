@@ -33,7 +33,7 @@ def in_smoke_dir(path):
 def build_model(config):
     method = {"asge": ASGE, "bicovg": BiCovG, "cwc": CwC,
               "dtg_ff": DTGFF, "deeperforward": DeeperForward,
-              "hcl_ff": HCLFF, "ttg": TTG, "ttgs": TTGS, "bp": BP}[config["method"]]
+              "hcl_ff": HCLFF, "ttg": TTG, "ttgs": TTGS, "bp": BP, "lastbp": BP}[config["method"]]
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(config["seed"])
         return LocalCNN(config, method(config))
@@ -118,27 +118,35 @@ def evaluate(model, loader, device):
     total = 0
     correct = torch.zeros(len(model.method.goodness) + 1, dtype=torch.long, device=device)
     loss_sum = torch.zeros((), device=device)
+    head_correct = torch.zeros((), dtype=torch.long, device=device)
+    head_loss_sum = torch.zeros((), device=device)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
     synchronize(device)
     started = time.perf_counter()
     for images, labels in loader:
         images, labels = images.to(device), labels.to(device)
-        logits, local_logits = model(images, return_local=True)
+        outputs = model(images, return_local=True)
+        logits, local_logits = outputs[:2]
         loss_sum += functional.cross_entropy(logits, labels, reduction="sum")
         correct += torch.stack([(prediction.argmax(dim=1) == labels).sum()
                                 for prediction in [logits, *local_logits]])
+        if model.head is not None:
+            head_loss_sum += functional.cross_entropy(outputs[2], labels, reduction="sum")
+            head_correct += (outputs[2].argmax(dim=1) == labels).sum()
         total += labels.numel()
     synchronize(device)
     elapsed = time.perf_counter() - started
-    return {**accuracy_metrics(correct, total), "fusion_loss": loss_sum.item() / total,
+    head_metrics = ({"head_accuracy": 100 * head_correct.item() / total, "head_loss": head_loss_sum.item() / total}
+                    if model.head is not None else {})
+    return {**accuracy_metrics(correct, total), "fusion_loss": loss_sum.item() / total, **head_metrics,
             "samples": total, "evaluation_seconds": elapsed,
             "evaluation_peak_memory_bytes": torch.cuda.max_memory_allocated(device)
             if device.type == "cuda" else None}
 
 
 def parameter_counts(model):
-    return {"backbone_parameters": sum(parameter.numel() for parameter in model.convs.parameters()),
+    counts = {"backbone_parameters": sum(parameter.numel() for parameter in model.convs.parameters()),
             "auxiliary_parameters": sum(parameter.numel() for parameter in model.method.parameters()
                                         if parameter.requires_grad)
             + sum(parameter.numel() for parameter in model.fusion.parameters()),
@@ -147,6 +155,10 @@ def parameter_counts(model):
                                              if name.endswith((".projection", ".bias")))
             + sum(parameter.numel() for parameter in model.method.parameters()
                   if not parameter.requires_grad)}
+    if model.head is not None:
+        head = sum(parameter.numel() for parameter in model.head.parameters())
+        counts.update(head_parameters=head, auxiliary_parameters=counts["auxiliary_parameters"] + head)
+    return counts
 
 
 def write_result(run_dir, config, model, metrics, training, device):

@@ -42,13 +42,26 @@ class LocalCNN(nn.Module):
                                         for layer in self.fusion_layers), config["num_classes"])
             nn.init.kaiming_normal_(self.fusion.weight, nonlinearity="relu")
             nn.init.zeros_(self.fusion.bias)
+        # Last-BP: a trainable head on the last layer carries the only training loss; built in its own fork so the
+        # conv and Fusion initial values stay those of Global BP.
+        self.head = None
+        if "bp_head" in config:
+            self.head_layers = config["bp_head"]["layers"]
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(config["seed"])
+                self.head = nn.Linear(sum(config["channels"][layer - 1] for layer in self.head_layers),
+                                      config["num_classes"])
+                nn.init.kaiming_normal_(self.head.weight, nonlinearity="relu")
+                nn.init.zeros_(self.head.bias)
 
     def fusion_features(self, activations):
         features = activations if self.global_bp else activations.detach()
         return features.mean(dim=(2, 3))
 
     def predict(self, features):
-        return self.fusion(torch.cat([features[layer - 1] if self.global_bp
+        # Fusion trains the backbone only in Global BP; with a Last-BP head it is read-only.
+        trains_backbone = self.global_bp and self.head is None
+        return self.fusion(torch.cat([features[layer - 1] if trains_backbone
                                       else features[layer - 1].detach()
                                       for layer in self.fusion_layers], dim=1))
 
@@ -69,4 +82,9 @@ class LocalCNN(nn.Module):
             if not self.global_bp:
                 hidden = hidden.detach()
         logits = self.predict(prediction_features)
-        return (logits, local_logits) if return_local else logits
+        if not return_local:
+            return logits
+        if self.head is not None:
+            return logits, local_logits, self.head(torch.cat([prediction_features[layer - 1]
+                                                              for layer in self.head_layers], dim=1))
+        return logits, local_logits
