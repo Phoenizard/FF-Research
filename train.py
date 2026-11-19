@@ -61,7 +61,11 @@ def average_gradients(optimizer):
 
 
 def build_optimizers(model, config):
-    if model.global_bp:
+    if model.head is not None:
+        parameter_groups = [list(model.convs.parameters()) + list(model.head.parameters()),
+                            model.fusion.parameters()]
+        settings = [config, config["fusion"]]
+    elif model.global_bp:
         parameter_groups = [model.parameters()]
         settings = [config]
     else:
@@ -85,6 +89,21 @@ def build_optimizers(model, config):
 
 
 def train_step(model, optimizers, images, labels, gradient_clip=None):
+    if model.head is not None:
+        # Last-BP: the head loss trains convs + head end to end; the read-only Fusion loss trains only Fusion.
+        for optimizer in optimizers:
+            optimizer.zero_grad(set_to_none=True)
+        logits, _, head_logits = model(images, return_local=True)
+        head_loss = functional.cross_entropy(head_logits, labels)
+        fusion_loss = functional.cross_entropy(logits, labels)
+        head_loss.backward()
+        fusion_loss.backward()
+        for optimizer in optimizers:
+            average_gradients(optimizer)
+            optimizer.step()
+        correct = torch.stack([(logits.detach().argmax(dim=1) == labels).sum(),
+                               (head_logits.detach().argmax(dim=1) == labels).sum()])
+        return logits.detach(), torch.stack([head_loss.detach(), fusion_loss.detach()]), correct
     if model.global_bp:
         optimizer = optimizers[0]
         optimizer.zero_grad(set_to_none=True)
@@ -335,10 +354,15 @@ def run(config, args, device, checkpoint=None):
             if peak_memory is not None:
                 training["peak_memory_bytes"] = max(training["peak_memory_bytes"] or 0, peak_memory)
             mean_losses = (loss_sum / total).tolist()
-            metrics = {"epoch": epoch + 1,
-                       **{f"train/{key}": value for key, value in accuracy_metrics(correct, total).items()},
-                       **{f"train/loss_layer_{index}": value
-                          for index, value in enumerate(mean_losses[:-1], start=1)},
+            if model.head is not None:
+                fusion_accuracy, head_accuracy = (100 * correct.double() / total).tolist()
+                train_metrics = {"train/fusion_accuracy": fusion_accuracy, "train/head_accuracy": head_accuracy,
+                                 "train/head_loss": mean_losses[0]}
+            else:
+                train_metrics = {**{f"train/{key}": value for key, value in accuracy_metrics(correct, total).items()},
+                                 **{f"train/loss_layer_{index}": value
+                                    for index, value in enumerate(mean_losses[:-1], start=1)}}
+            metrics = {"epoch": epoch + 1, **train_metrics,
                        "train/fusion_loss": mean_losses[-1], "train/lr": learning_rate,
                        "train/fusion_lr": fusion_learning_rate, "train/samples": total,
                        "time/epoch_seconds": elapsed,
@@ -378,16 +402,18 @@ def run(config, args, device, checkpoint=None):
 def main():
     parser = argparse.ArgumentParser(description="Train FF methods on the common dataset backbone.")
     parser.add_argument("--datasets", nargs="+", choices=DATASETS, default=["cifar10", "cifar100"])
-    parser.add_argument("--method", choices=["asge", "bicovg", "cwc", "dtg_ff", "deeperforward", "hcl_ff", "ttg", "ttgs", "bp"],
+    parser.add_argument("--method", choices=["asge", "bicovg", "cwc", "dtg_ff", "deeperforward", "hcl_ff", "ttg", "ttgs", "bp",
+                                              "lastbp"],
                         default="asge")
     parser.add_argument("--bicovg-readout", choices=["learnable", "random"], default="learnable",
                         help="BiCovG local linear readout: trainable or fixed at random initialization.")
     parser.add_argument("--tree-source", choices=["internal", "published"], default="internal",
                         help="TTG class tree: built from training class means, or the released HCL-FF tree.")
     parser.add_argument("--seeds", nargs="+", type=int, choices=[1, 2, 3])
-    parser.add_argument("--depth", type=int, choices=[8, 16, 31], default=8,
+    parser.add_argument("--depth", type=int, choices=[8, 16, 31, 32], default=8,
                         help="Common backbone depth; 16 repeats each 8-layer item once (cifar100, tinyimagenet); "
-                             "31 is CNN32 (cifar100, tinyimagenet; 300 epochs).")
+                             "31 is CNN32 (cifar100, tinyimagenet; 300 epochs); 32 is CNN32-depth, each 16-layer "
+                             "item repeated once more (cifar100, tinyimagenet).")
     parser.add_argument("--shortcut", action="store_true",
                         help="Residual shortcuts on the CNN32 same-shape blocks (--depth 31 only).")
     parser.add_argument("--batch-size", default="256")
