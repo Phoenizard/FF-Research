@@ -39,7 +39,7 @@ checkpoint 只在 tmp/deep_bp 中，以下参数足以重跑。
 
 | 目录 | L21–L32 输出的 Dropout | 初值 | 训练的参数 | 轮数 | 峰值显存（MiB） |
 |---|---|---|---|---|---|
-| results | 0.1 | 重置 | L21–L32 + Fusion | 400 | 1554.1 |
+| results_dropout01 | 0.1 | 重置 | L21–L32 + Fusion | 400 | 1554.1 |
 | results_dropout03 | 0.3 | 重置 | L21–L32 + Fusion | 400 | 1554.1 |
 | results_dropout05_100 | 0.5 | 重置 | L21–L32 + Fusion | 100 | 1554.1 |
 | results_keep_dropout03 | 0.3 | 保留 | L21–L32 + Fusion | 100 | 1554.1 |
