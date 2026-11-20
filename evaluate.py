@@ -19,6 +19,7 @@ from methods.DeeperForward import DeeperForward
 from methods.HCL_FF import HCLFF
 from methods.TTG import TTG, TTGS
 from models.cnn import LocalCNN
+from models.resnet17 import ARCHITECTURE as RESNET17, ResNet17
 
 
 ROOT = Path(__file__).resolve().parent
@@ -31,6 +32,10 @@ def in_smoke_dir(path):
 
 
 def build_model(config):
+    if config.get("architecture") == RESNET17:
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(config["seed"])
+            return ResNet17(config)
     method = {"asge": ASGE, "bicovg": BiCovG, "cwc": CwC,
               "dtg_ff": DTGFF, "deeperforward": DeeperForward,
               "hcl_ff": HCLFF, "ttg": TTG, "ttgs": TTGS, "bp": BP, "lastbp": BP}[config["method"]]
@@ -41,6 +46,8 @@ def build_model(config):
 
 def run_name(config):
     method_name = config["method"]
+    if config.get("architecture") == RESNET17:
+        return f"{method_name}-resnet17"
     if config.get("readout") == "random":
         method_name += "-random-readout"
     if config.get("tree_source") == "published":
@@ -61,7 +68,8 @@ def upload_wandb(run_dir, method, tree_source, entity, project):
     result = json.loads((run_dir / "result.json").read_text())
     history = json.loads((run_dir / "history.json").read_text())
     recorded = result["config"]
-    config = experiment_config(recorded["dataset"], recorded["seed"], method, len(recorded["channels"]),
+    depth = 17 if recorded.get("architecture") == RESNET17 else len(recorded["channels"])
+    config = experiment_config(recorded["dataset"], recorded["seed"], method, depth,
                                bool(recorded.get("shortcut_blocks")))
     if method in ("ttg", "ttgs"):
         config["tree_source"] = tree_source
@@ -73,7 +81,7 @@ def upload_wandb(run_dir, method, tree_source, entity, project):
     tracker = wandb.init(
         entity=entity, project=project, name=f"{method_name}-{config['dataset']}-seed{config['seed']}",
         group=f"{method_name}-{config['dataset']}", job_type="train",
-        config={**config, "environment": {key: training[key] for key in
+        config={**config, "environment": {key: training.get(key) for key in
                 ("python", "torch", "torchvision", "device", "workers", "cpu_threads")},
                 "parameters": result["parameters"]}, save_code=False)
     tracker.define_metric("epoch")
@@ -116,7 +124,8 @@ def accuracy_metrics(correct, total):
 def evaluate(model, loader, device):
     model.eval()
     total = 0
-    correct = torch.zeros(len(model.method.goodness) + 1, dtype=torch.long, device=device)
+    units = model.local_units if isinstance(model, ResNet17) else len(model.method.goodness)
+    correct = torch.zeros(units + 1, dtype=torch.long, device=device)
     loss_sum = torch.zeros((), device=device)
     head_correct = torch.zeros((), dtype=torch.long, device=device)
     head_loss_sum = torch.zeros((), device=device)
@@ -146,6 +155,8 @@ def evaluate(model, loader, device):
 
 
 def parameter_counts(model):
+    if isinstance(model, ResNet17):
+        return model.parameter_counts()
     counts = {"backbone_parameters": sum(parameter.numel() for parameter in model.convs.parameters()),
             "auxiliary_parameters": sum(parameter.numel() for parameter in model.method.parameters()
                                         if parameter.requires_grad)

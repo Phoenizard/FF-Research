@@ -6,6 +6,7 @@ from methods.DTG_FF import DEFAULTS as DTG_DEFAULTS
 from methods.DeeperForward import DEFAULTS as DEEPERFORWARD_DEFAULTS
 from methods.HCL_FF import DEFAULTS as HCL_DEFAULTS, LEVELS, LEVELS_16, LEVELS_31, LEVELS_32
 from methods.TTG import DEFAULTS as TTG_DEFAULTS, TTGS_DEFAULTS
+from models.resnet17 import ARCHITECTURE as RESNET17, WIDTHS as RESNET17_WIDTHS
 
 
 DATASETS = {
@@ -15,7 +16,58 @@ DATASETS = {
 }
 
 
+def resnet17_config(dataset, seed, method):
+    """DeeperForward ResNet17 (models/resnet17.py): FF at the platform's 400 epochs, BP with the DeeperForward
+    SGD recipe for 150 epochs."""
+    if dataset not in ("cifar10", "cifar100") or method not in ("bp", "asge", "ttgs"):
+        raise ValueError(f"ResNet17 (depth 17) is defined for cifar10/cifar100 with bp, asge, ttgs; "
+                         f"got {dataset} {method}")
+    base = experiment_config(dataset, seed, "ttgs" if method == "ttgs" else "asge")
+    config = {
+        "dataset": dataset, "num_classes": base["num_classes"], "method": method, "seed": seed,
+        "epochs": 150 if method == "bp" else 400, "batch_size": base["batch_size"], "run_kind": "benchmark",
+        "data_split": base["data_split"], "evaluation_scope": base["evaluation_scope"],
+        "augmentation": base["augmentation"], "normalization": base["normalization"],
+        "architecture": RESNET17, "widths": RESNET17_WIDTHS, "convs": 17,
+        "merge": "add_after_b_concat_after_d_on_layer_output", "shortcut_downsample": "avg_pool_2x2",
+        "conv_bias": False, "initialization": "kaiming_normal_fan_in_relu",
+        "prediction": base["prediction"],
+        "fusion": {"layers": "every_relu_output", "feature_location": "relu_output_gap", "read_only": True,
+                   **{key: base["fusion"][key] for key in ("initialization", "optimizer", "learning_rate",
+                                                           "minimum_learning_rate", "weight_decay", "betas",
+                                                           "optimizer_epsilon", "scheduler")}},
+        "precision": base["precision"],
+        "source": "https://github.com/tobysunsun/deeperforward", "source_commit": "f6f5e48",
+    }
+    if method == "bp":
+        config.update({"layer": "conv_bn_relu", "bn_init": "weight_one_bias_zero", "head": "gap_last_tensor_linear",
+                       "optimizer": "SGD", "learning_rate": 0.1, "momentum": 0.9, "nesterov": False,
+                       "weight_decay": 1e-4, "scheduler": "MultiStepLR",
+                       "milestones": [config["epochs"] // 2, (3 * config["epochs"]) // 4], "gamma": 0.1})
+        return config
+    config.update({key: base[key] for key in ("optimizer", "learning_rate", "minimum_learning_rate",
+                                              "weight_decay", "betas", "optimizer_epsilon", "scheduler",
+                                              "dropout", "norm", "norm_epsilon")})
+    config.update({"learning_unit": "each_conv", "goodness_location": "relu_output", "alpha": 1.0})
+    if method == "asge":
+        config.update({"layer": "conv_relu_dropout_sample_rms", "readout": "fixed_random",
+                       "input_norm": "sample_rms"})
+    else:
+        config.update({key: TTGS_DEFAULTS[key] for key in ("temperature_min", "temperature_max", "tree_build_epoch",
+                                                           "tree_linkage", "tree_metric", "skip_beta_sq",
+                                                           "stochastic_depth_max")})
+        config.update({"layer": "conv_relu_channel_layer_norm", "readout": "tree_code_learnable_temperature",
+                       "tree_source": "internal", "tree_feature_layer": 17, "input_norm": None,
+                       "stream": "relax_every_same_shape_layer_output_after_merge_reset_on_shape_change",
+                       "stream_dropout": "after_stream_on_next_input"})
+    return config
+
+
 def experiment_config(dataset, seed, method="asge", depth=8, shortcut=False):
+    if depth == 17:
+        if shortcut:
+            raise ValueError("--shortcut is defined for the CNN32 backbone (depth 31) only")
+        return resnet17_config(dataset, seed, method)
     if depth not in (8, 16, 31, 32) or (depth in (16, 32) and dataset not in ("cifar100", "tinyimagenet")):
         raise ValueError(f"The 16-layer and CNN32-depth backbones are defined for cifar100 and tinyimagenet only; "
                          f"got {dataset} depth {depth}")
