@@ -30,6 +30,7 @@ from methods.TTG import centered_code, tree_code, tree_signs, unit_permutations
 from methods.asge import SpatialGoodness, pooled_energy
 
 ARCHITECTURE = "deeperforward_resnet17"
+ARCHITECTURE_33 = "deeperforward_resnet33"
 WIDTHS = [100, 200, 400, 800]
 NO, ADD, CONCAT = 0, 1, 2
 
@@ -42,6 +43,20 @@ def layout():
         last = block == len(WIDTHS) - 1
         layers += [(width, width, stride, NO, False, False), (width, width, 1, ADD, True, False),
                    (width, width, 1, NO, False, False), (width, width, 1, CONCAT, not last, True)]
+    return layers
+
+
+def layout_33():
+    layers = [(3, WIDTHS[0], 1, NO, True, False)]
+    for stage, (width, blocks) in enumerate(zip(WIDTHS, [3, 4, 6, 3])):
+        for block in range(blocks):
+            last = block == blocks - 1
+            keep = not (last and stage == len(WIDTHS) - 1)
+            if stage > 0 and block == 0:
+                previous = WIDTHS[stage - 1]
+                layers += [(previous, width, 2, NO, False, False), (width, width - previous, 1, CONCAT, keep, last)]
+            else:
+                layers += [(width, width, 1, NO, False, False), (width, width, 1, ADD, keep, last)]
     return layers
 
 
@@ -69,11 +84,13 @@ def adamw(parameters, setting):
 class ResNet17(nn.Module):
     def __init__(self, config):
         super().__init__()
-        if config["method"] not in ("bp", "asge", "ttgs"):
-            raise ValueError(f"ResNet17 supports bp, asge and ttgs; got {config['method']}")
+        if config["method"] not in ("bp", "asge", "ttgs", "ttg"):
+            raise ValueError(f"ResNet17 supports bp, asge, ttgs and ttg; got {config['method']}")
         if config.get("tree_source", "internal") != "internal":
             raise ValueError("ResNet17 TTGS builds its tree internally; --tree-source published is not defined")
-        self.method, self.layout = config["method"], layout()
+        r33 = config["architecture"] == ARCHITECTURE_33
+        self.method, self.layout = config["method"], layout_33() if r33 else layout()
+        self.tree = self.method in ("ttgs", "ttg")
         self.convs = nn.ModuleList(nn.Conv2d(i, o, 3, s, 1, bias=False) for i, o, s, *_ in self.layout)
         for conv in self.convs:
             nn.init.kaiming_normal_(conv.weight, nonlinearity="relu")
@@ -81,7 +98,7 @@ class ResNet17(nn.Module):
         self.head = None
         if self.method == "bp":
             self.norms = nn.ModuleList(nn.BatchNorm2d(o) for _, o, *_ in self.layout)
-            self.head = nn.Linear(2 * WIDTHS[-1], classes)
+            self.head = nn.Linear(WIDTHS[-1] if r33 else 2 * WIDTHS[-1], classes)
             self.local_units = 0
         else:
             sizes, size = [], config["augmentation"]["crop_size"]
@@ -100,7 +117,7 @@ class ResNet17(nn.Module):
             self.fusion = nn.Linear(sum(o for _, o, *_ in self.layout), classes)
             nn.init.kaiming_normal_(self.fusion.weight, nonlinearity="relu")
             nn.init.zeros_(self.fusion.bias)
-        if self.method == "ttgs":
+        if self.tree:
             self.temperature_min, self.temperature_max = config["temperature_min"], config["temperature_max"]
             for head in self.goodness:
                 head.temperature_logit = nn.Parameter(torch.zeros(()))
@@ -108,9 +125,11 @@ class ResNet17(nn.Module):
                 head.bias.zero_()
             self.classes, self.seed = classes, config["seed"]
             self.build_epoch = config["tree_build_epoch"]
+        if self.method == "ttgs":
             self.skip_beta = config["skip_beta_sq"] ** 0.5
             self.skip_a = (1.0 - config["skip_beta_sq"]) ** 0.5
             self.drop_max = config["stochastic_depth_max"]
+        if self.tree:
             self.register_buffer("tree_sums", torch.zeros(classes, WIDTHS[-1], dtype=torch.float64))
             self.register_buffer("tree_counts", torch.zeros(classes, dtype=torch.float64))
             self.register_buffer("tree_merges", torch.full((classes - 1, 2), -1, dtype=torch.int64))
@@ -121,12 +140,12 @@ class ResNet17(nn.Module):
 
     def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
         super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
-        if self.method == "ttgs":
+        if self.tree:
             self.built = bool(self.tree_built)
 
     def start_epoch(self, epoch):
         self.epoch = epoch
-        if self.method == "ttgs" and not self.built and epoch >= self.build_epoch:
+        if self.tree and not self.built and epoch >= self.build_epoch:
             self.build_tree()
 
     # ---- BP ----
@@ -187,6 +206,8 @@ class ResNet17(nn.Module):
         if self.method == "ttgs":
             output = self.stream(index, merged, previous)
             return logits, activations, output, self.dropout(output)
+        if self.method == "ttg":
+            return logits, activations, merged, self.dropout(merged)
         return logits, activations, merged, merged
 
     def fusion_logits(self, features):
@@ -211,7 +232,7 @@ class ResNet17(nn.Module):
                 if not torch.isfinite(loss):
                     raise RuntimeError(f"Non-finite loss in layer {index + 1} at epoch {self.epoch + 1}")
                 losses.append(loss.detach())
-                if self.method == "ttgs" and not self.built and self.epoch == self.build_epoch - 1 \
+                if self.tree and not self.built and self.epoch == self.build_epoch - 1 \
                         and index == len(self.convs) - 1:
                     self.accumulate_tree(activations, labels)
             _, _, _, _, keep, pool = self.layout[index]

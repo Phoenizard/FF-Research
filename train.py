@@ -322,7 +322,7 @@ def run(config, args, device, checkpoint=None):
                 training_loader.generator.manual_seed(1000 * config["seed"] + world * epoch + rank)
             model.train()
             if isinstance(model, ResNet17):
-                model.start_epoch(epoch)  # TTGS builds its tree at the start of epoch tree_build_epoch
+                model.start_epoch(epoch)
             else:
                 model.method.epoch = epoch
             total = 0
@@ -418,11 +418,11 @@ def main():
     parser.add_argument("--tree-source", choices=["internal", "published"], default="internal",
                         help="TTG class tree: built from training class means, or the released HCL-FF tree.")
     parser.add_argument("--seeds", nargs="+", type=int, choices=[1, 2, 3])
-    parser.add_argument("--depth", type=int, choices=[8, 16, 17, 31, 32], default=8,
+    parser.add_argument("--depth", type=int, choices=[8, 16, 17, 31, 32, 33], default=8,
                         help="Common backbone depth; 16 repeats each 8-layer item once (cifar100, tinyimagenet); "
                              "31 is CNN32 (cifar100, tinyimagenet; 300 epochs); 32 is CNN32-depth, each 16-layer "
                              "item repeated once more (cifar100, tinyimagenet); 17 is the DeeperForward ResNet17 "
-                             "(cifar10, cifar100; bp, asge, ttgs; BP 150 epochs, FF 400).")
+                             "(cifar10, cifar100); 33 is the DeeperForward ResNet33 (cifar10, cifar100).")
     parser.add_argument("--shortcut", action="store_true",
                         help="Residual shortcuts on the CNN32 same-shape blocks (--depth 31 only).")
     parser.add_argument("--batch-size", default="256")

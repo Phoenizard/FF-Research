@@ -19,7 +19,7 @@ from methods.DeeperForward import DeeperForward
 from methods.HCL_FF import HCLFF
 from methods.TTG import TTG, TTGS
 from models.cnn import LocalCNN
-from models.resnet17 import ARCHITECTURE as RESNET17, ResNet17
+from models.resnet17 import ARCHITECTURE as RESNET17, ARCHITECTURE_33 as RESNET33, ResNet17
 
 
 ROOT = Path(__file__).resolve().parent
@@ -32,7 +32,7 @@ def in_smoke_dir(path):
 
 
 def build_model(config):
-    if config.get("architecture") == RESNET17:
+    if config.get("architecture") in (RESNET17, RESNET33):
         with torch.random.fork_rng(devices=[]):
             torch.manual_seed(config["seed"])
             return ResNet17(config)
@@ -46,8 +46,8 @@ def build_model(config):
 
 def run_name(config):
     method_name = config["method"]
-    if config.get("architecture") == RESNET17:
-        return f"{method_name}-resnet17"
+    if config.get("architecture") in (RESNET17, RESNET33):
+        return f"{method_name}-resnet{config['convs']}"
     if config.get("readout") == "random":
         method_name += "-random-readout"
     if config.get("tree_source") == "published":
@@ -68,7 +68,7 @@ def upload_wandb(run_dir, method, tree_source, entity, project):
     result = json.loads((run_dir / "result.json").read_text())
     history = json.loads((run_dir / "history.json").read_text())
     recorded = result["config"]
-    depth = 17 if recorded.get("architecture") == RESNET17 else len(recorded["channels"])
+    depth = recorded["convs"] if recorded.get("architecture") in (RESNET17, RESNET33) else len(recorded["channels"])
     config = experiment_config(recorded["dataset"], recorded["seed"], method, depth,
                                bool(recorded.get("shortcut_blocks")))
     if method in ("ttg", "ttgs"):

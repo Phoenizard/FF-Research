@@ -6,7 +6,7 @@ from methods.DTG_FF import DEFAULTS as DTG_DEFAULTS
 from methods.DeeperForward import DEFAULTS as DEEPERFORWARD_DEFAULTS
 from methods.HCL_FF import DEFAULTS as HCL_DEFAULTS, LEVELS, LEVELS_16, LEVELS_31, LEVELS_32
 from methods.TTG import DEFAULTS as TTG_DEFAULTS, TTGS_DEFAULTS
-from models.resnet17 import ARCHITECTURE as RESNET17, WIDTHS as RESNET17_WIDTHS
+from models.resnet17 import ARCHITECTURE as RESNET17, ARCHITECTURE_33 as RESNET33, WIDTHS as RESNET17_WIDTHS
 
 
 DATASETS = {
@@ -17,15 +17,20 @@ DATASETS = {
 
 
 def resnet17_config(dataset, seed, method):
-    """DeeperForward ResNet17 (models/resnet17.py): FF at the platform's 400 epochs, BP with the DeeperForward
-    SGD recipe for 150 epochs."""
-    if dataset not in ("cifar10", "cifar100") or method not in ("bp", "asge", "ttgs"):
-        raise ValueError(f"ResNet17 (depth 17) is defined for cifar10/cifar100 with bp, asge, ttgs; "
+    """DeeperForward ResNet17 (models/resnet17.py), 400 epochs; BP with the DeeperForward SGD recipe."""
+    if dataset not in ("cifar10", "cifar100") or method not in ("bp", "asge", "ttgs", "ttg"):
+        raise ValueError(f"ResNet17 (depth 17) is defined for cifar10/cifar100 with bp, asge, ttgs, ttg; "
                          f"got {dataset} {method}")
+    if method == "ttg":
+        config = resnet17_config(dataset, seed, "ttgs")
+        for key in ("skip_beta_sq", "stochastic_depth_max", "stream", "stream_dropout"):
+            config.pop(key)
+        config.update(method="ttg", next_input_dropout="after_merge_on_next_input")
+        return config
     base = experiment_config(dataset, seed, "ttgs" if method == "ttgs" else "asge")
     config = {
         "dataset": dataset, "num_classes": base["num_classes"], "method": method, "seed": seed,
-        "epochs": 150 if method == "bp" else 400, "batch_size": base["batch_size"], "run_kind": "benchmark",
+        "epochs": 400, "batch_size": base["batch_size"], "run_kind": "benchmark",
         "data_split": base["data_split"], "evaluation_scope": base["evaluation_scope"],
         "augmentation": base["augmentation"], "normalization": base["normalization"],
         "architecture": RESNET17, "widths": RESNET17_WIDTHS, "convs": 17,
@@ -63,11 +68,25 @@ def resnet17_config(dataset, seed, method):
     return config
 
 
+def resnet33_config(dataset, seed, method):
+    if method not in ("bp", "asge", "ttg"):
+        raise ValueError(f"ResNet33 (depth 33) is defined with bp, asge, ttg; got {method}")
+    config = resnet17_config(dataset, seed, method)
+    if method == "ttg":
+        config["tree_feature_layer"] = 33
+    config.update(architecture=RESNET33, convs=33, blocks=[3, 4, 6, 3],
+                  merge="block_add_after_conv2_concat_on_first_block_of_stages_2_to_4",
+                  source="https://github.com/tobysunsun/deeperforward (model/resnet34.py)")
+    if method == "bp":
+        config["head"] = "gap_last_tensor_linear_800"
+    return config
+
+
 def experiment_config(dataset, seed, method="asge", depth=8, shortcut=False):
-    if depth == 17:
+    if depth in (17, 33):
         if shortcut:
             raise ValueError("--shortcut is defined for the CNN32 backbone (depth 31) only")
-        return resnet17_config(dataset, seed, method)
+        return (resnet17_config if depth == 17 else resnet33_config)(dataset, seed, method)
     if depth not in (8, 16, 31, 32) or (depth in (16, 32) and dataset not in ("cifar100", "tinyimagenet")):
         raise ValueError(f"The 16-layer and CNN32-depth backbones are defined for cifar100 and tinyimagenet only; "
                          f"got {dataset} depth {depth}")
