@@ -69,10 +69,10 @@ def resnet17_config(dataset, seed, method):
 
 
 def resnet33_config(dataset, seed, method):
-    if method not in ("bp", "asge", "ttg"):
-        raise ValueError(f"ResNet33 (depth 33) is defined with bp, asge, ttg; got {method}")
+    if method not in ("bp", "asge", "ttgs", "ttg"):
+        raise ValueError(f"ResNet33 (depth 33) is defined with bp, asge, ttgs, ttg; got {method}")
     config = resnet17_config(dataset, seed, method)
-    if method == "ttg":
+    if method in ("ttgs", "ttg"):
         config["tree_feature_layer"] = 33
     config.update(architecture=RESNET33, convs=33, blocks=[3, 4, 6, 3],
                   merge="block_add_after_conv2_concat_on_first_block_of_stages_2_to_4",
